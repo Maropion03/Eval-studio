@@ -11,6 +11,7 @@ from app.api.deps import get_session_id
 from app.models.models import EvaluationRun, Dataset, EvaluationItem
 from app.schemas.schemas import RunCreate, RunResponse, ItemResponse
 from app.services.judge import evaluate_single
+from app.core.config import settings
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
