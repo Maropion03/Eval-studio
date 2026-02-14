@@ -189,6 +189,9 @@ export async function uploadDatasetFile(file: File, name?: string): Promise<Data
 
     const res = await fetch(`${BASE_URL}/datasets/upload`, {
         method: 'POST',
+        headers: {
+            'x-session-id': SESSION_ID,
+        },
         body: formData,
     });
 
