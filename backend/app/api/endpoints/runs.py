@@ -214,6 +214,9 @@ async def _run_evaluation(
             run.status = "failed"
             db.commit()
         print(f"[ERROR] Evaluation failed for run {run_id}: {e}")
+        db.rollback()
+        evaluation_run.status = "failed"
+        db.commit()
 
     finally:
         db.close()
