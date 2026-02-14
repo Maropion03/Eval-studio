@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react'; // FIXED: Removed 'React'
 import { useTranslation } from 'react-i18next';
-import { FloppyDisk, ArrowCounterClockwise, Key, Robot } from '@phosphor-icons/react';
+import { FloppyDisk, ArrowCounterClockwise, Key, Robot, Faders } from '@phosphor-icons/react';
 import { api } from '../services/api';
 import Select from '../components/ui/Select';
 
-// Fixed Model List for SiliconFlow
+// UPDATED: User's specific model list
 const SILICON_MODELS = [
     { value: 'Pro/zai-org/GLM-4-9B-Chat', label: 'GLM-4-9B-Chat' },
-    { value: 'deepseek-ai/DeepSeek-V3', label: 'DeepSeek-V3' },
-    { value: 'deepseek-ai/DeepSeek-R1', label: 'DeepSeek-R1' },
-    { value: 'Qwen/Qwen2.5-72B-Instruct', label: 'Qwen2.5-72B' },
-    { value: 'Qwen/Qwen2.5-7B-Instruct', label: 'Qwen2.5-7B' }
+    { value: 'Pro/deepseek-ai/DeepSeek-V3', label: 'DeepSeek-V3 (Pro)' },
+    { value: 'Pro/deepseek-ai/DeepSeek-R1', label: 'DeepSeek-R1 (Pro)' },
+    { value: 'Pro/Qwen/Qwen2.5-72B-Instruct', label: 'Qwen2.5-72B (Pro)' },
+    { value: 'Pro/Qwen/Qwen2.5-7B-Instruct', label: 'Qwen2.5-7B (Pro)' }
 ];
 
 const SILICON_BASE_URL = 'https://api.siliconflow.cn/v1';
@@ -33,8 +33,11 @@ export default function Settings() {
         // Load LLM Local Settings
         setApiKey(localStorage.getItem('llm_api_key') || '');
         const savedModel = localStorage.getItem('llm_model');
+        // Check if saved model is valid in new list, else default
         if (savedModel && SILICON_MODELS.some(m => m.value === savedModel)) {
             setModel(savedModel);
+        } else {
+            setModel(SILICON_MODELS[0].value);
         }
 
         // Load Global Settings
@@ -50,22 +53,19 @@ export default function Settings() {
     const handleSave = async () => {
         setLoading(true);
         try {
-            // 1. Save LLM Settings to LocalStorage
             localStorage.setItem('llm_api_key', apiKey);
             localStorage.setItem('llm_model', model);
-            // HARDCODE Base URL for SiliconFlow
             localStorage.setItem('llm_base_url', SILICON_BASE_URL);
 
-            // 2. Save Global Settings to Backend
             await api.updateSettings({
                 system_prompt: systemPrompt,
                 low_score_threshold: lowScoreThreshold,
             });
 
-            alert(t('settings.saved_success') || 'Settings saved successfully');
+            alert(t('settings.saved_success'));
         } catch (error) {
             console.error(error);
-            alert(t('settings.saved_error') || 'Failed to save settings');
+            alert(t('settings.saved_error'));
         } finally {
             setLoading(false);
         }
@@ -91,10 +91,10 @@ export default function Settings() {
                     </div>
                     <div>
                         <h2 className="text-lg font-semibold text-zinc-200">
-                            SiliconFlow Configuration
+                            {t('settings.silicon_title')}
                         </h2>
                         <p className="text-sm text-zinc-500">
-                            Configure your SiliconFlow API connection
+                            {t('settings.silicon_desc')}
                         </p>
                     </div>
                 </div>
@@ -103,7 +103,7 @@ export default function Settings() {
                     {/* API Key */}
                     <div className="space-y-2">
                         <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                            API Key
+                            {t('settings.api_key_label')}
                         </label>
                         <div className="relative">
                             <input
@@ -120,7 +120,7 @@ export default function Settings() {
                     {/* Model Select */}
                     <div className="space-y-2">
                         <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                            Model
+                            {t('settings.model_label')}
                         </label>
                         <Select
                             value={model}
@@ -135,14 +135,14 @@ export default function Settings() {
             <section className="bg-zinc-900/30 border border-zinc-700/50 rounded-xl p-6 space-y-6">
                 <div className="flex items-center gap-3 mb-4">
                     <div className="p-2 bg-emerald-500/10 rounded-lg">
-                        <FloppyDisk size={24} className="text-emerald-400" />
+                        <Faders size={24} className="text-emerald-400" />
                     </div>
                     <div>
                         <h2 className="text-lg font-semibold text-zinc-200">
-                            Global Evaluation Settings
+                            {t('settings.global_title')}
                         </h2>
                         <p className="text-sm text-zinc-500">
-                            Default thresholds and prompts
+                            {t('settings.global_desc')}
                         </p>
                     </div>
                 </div>

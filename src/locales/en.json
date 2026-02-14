@@ -95,7 +95,14 @@
     "model_label": "Model Name",
     "api_key_label": "API Key",
     "base_url_label": "Base URL",
-    "save": "Save Settings"
+    "save": "Save Settings",
+    "silicon_title": "SiliconFlow Configuration",
+    "silicon_desc": "Configure your SiliconFlow API connection",
+    "global_title": "Global Evaluation Settings",
+    "global_desc": "Default thresholds and prompts",
+    "save_btn": "Save Settings",
+    "saved_success": "Settings saved successfully",
+    "saved_error": "Failed to save settings"
   },
   "modal": {
     "title": "Evaluation Config",
