@@ -6,11 +6,11 @@ import Select from '../components/ui/Select';
 
 // UPDATED: User's specific model list
 const SILICON_MODELS = [
-    { value: 'Pro/zai-org/GLM-4-9B-Chat', label: 'GLM-4-9B-Chat' },
-    { value: 'Pro/deepseek-ai/DeepSeek-V3', label: 'DeepSeek-V3 (Pro)' },
-    { value: 'Pro/deepseek-ai/DeepSeek-R1', label: 'DeepSeek-R1 (Pro)' },
-    { value: 'Pro/Qwen/Qwen2.5-72B-Instruct', label: 'Qwen2.5-72B (Pro)' },
-    { value: 'Pro/Qwen/Qwen2.5-7B-Instruct', label: 'Qwen2.5-7B (Pro)' }
+    { value: 'Pro/zai-org/GLM-5', label: 'GLM-5 (Pro)' },
+    { value: 'Pro/moonshotai/Kimi-K2.5', label: 'Kimi K2.5 (Pro)' },
+    { value: 'Pro/zai-org/GLM-4.7', label: 'GLM-4.7 (Pro)' },
+    { value: 'Pro/deepseek-ai/DeepSeek-R1', label: 'DeepSeek R1 (Pro)' },
+    { value: 'stepfun-ai/Step-3.5-Flash', label: 'Step-3.5 Flash' }
 ];
 
 const SILICON_BASE_URL = 'https://api.siliconflow.cn/v1';
