@@ -347,3 +347,31 @@ export async function checkHealth(): Promise<boolean> {
         return false;
     }
 }
+// ... (保留上面的所有代码)
+
+// ── Compatibility Layer (兼容旧代码) ────────────────
+
+export const api = {
+    // Datasets
+    getDatasets: listDatasets,
+    uploadDataset: (file: File) => uploadDatasetFile(file), // 名字映射：uploadDataset -> uploadDatasetFile
+    deleteDataset,
+
+    // Runs
+    getRuns: listRuns,
+    createRun,
+    getRun,
+
+    // Settings
+    getSettings,
+    updateSettings,
+
+    // Playground
+    runPlayground: (data: any) => playgroundEvaluate({
+        system_prompt: data.system_prompt,
+        query: data.user_input,
+        context: '', // 默认值
+        response: '', // 默认值
+        model: data.model,
+    }),
+};
