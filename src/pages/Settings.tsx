@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FloppyDisk, ArrowCounterClockwise, Key, Robot } from '@phosphor-icons/react';
 import { api } from '../services/api';
