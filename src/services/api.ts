@@ -7,7 +7,7 @@
  */
 
 import type { EvaluationItem, EvaluationRun, Dataset, PlaygroundResult, AppSettings } from '../types';
-
+export type { EvaluationItem, EvaluationRun, Dataset, PlaygroundResult, AppSettings };
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 
 // ── Session Management (Volatile) ────────────────
