@@ -187,19 +187,15 @@ export async function uploadDatasetFile(file: File, name?: string): Promise<Data
     formData.append('file', file);
     if (name) formData.append('name', name);
 
-    const res = await fetch(`${BASE_URL}/datasets/upload`, {
+    // Using request() ensures:
+    // 1. x-session-id is injected (via helper)
+    // 2. Content-Type is NOT set to application/json (body is FormData)
+    // 3. Browser sets Content-Type: multipart/form-data; boundary=...
+    const raw = await request<ApiDataset>('/datasets/upload', {
         method: 'POST',
-        headers: {
-            'x-session-id': SESSION_ID,
-        },
         body: formData,
     });
-
-    if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`Upload failed (${res.status}): ${body}`);
-    }
-    return adaptDataset(await res.json());
+    return adaptDataset(raw);
 }
 
 export async function getDatasetItems(
