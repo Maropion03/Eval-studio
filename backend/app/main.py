@@ -41,7 +41,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*", "x-llm-key", "x-llm-model", "x-llm-base-url", "Authorization", "Content-Type"],
+    allow_headers=["*", "x-llm-key", "x-llm-model", "x-llm-base-url", "x-session-id", "Authorization", "Content-Type"],
 )
 
 # Debug: Global Exception Handler
