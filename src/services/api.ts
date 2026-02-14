@@ -13,6 +13,7 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 // Generates a random session ID every time the module loads (page refresh)
 const SESSION_ID = crypto.randomUUID();
 console.log('[Eval Studio] Session ID:', SESSION_ID);
+console.log('[Eval Studio] API Client v2 Loaded');
 
 // ── Helper ──────────────────────────────────────
 
@@ -20,7 +21,10 @@ async function request<T>(
     path: string,
     options: RequestInit = {},
 ): Promise<T> {
-    const url = `${BASE_URL}${path}`;
+    // Ensure no double slashes if BASE_URL ends with /
+    const cleanBase = BASE_URL.replace(/\/$/, '');
+    const cleanEndpoint = path.startsWith('/') ? path : `/${path}`;
+    const url = `${cleanBase}${cleanEndpoint}`;
 
     const headers: Record<string, string> = {};
 
