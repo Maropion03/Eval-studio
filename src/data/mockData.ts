@@ -1,53 +1,6 @@
-// ============================================================
-// Eval Studio Mock Data
-// Matches PRD Section 5.1 JSON Schema + Diff View hallucination fields
-// ============================================================
+import type { EvaluationItem, Dataset, EvaluationRun } from '../types';
 
-export interface EvaluationItem {
-    id: string;
-    query: string;
-    context: string;
-    response: string;
-    groundTruth: string;
-    scores: {
-        faithfulness: number;
-        relevance: number;
-        coherence: number; // 1-5 scale
-    };
-    reasoning: string;
-    failureType?: 'Retrieval_Failure' | 'Reasoning_Error' | 'Safety_Refusal';
-    // For Diff View: indices into the response string marking hallucinated spans
-    hallucinationSpans?: { start: number; end: number; text: string }[];
-    usage: {
-        prompt_tokens: number;
-        completion_tokens: number;
-    };
-}
-
-export interface Dataset {
-    id: string;
-    name: string;
-    itemCount: number;
-    createdAt: string;
-    status: 'ready' | 'evaluating' | 'completed';
-}
-
-export interface EvaluationRun {
-    id: string;
-    datasetId: string;
-    datasetName: string;
-    model: string;
-    metrics: string[];
-    status: 'running' | 'completed' | 'failed';
-    createdAt: string;
-    completedAt?: string;
-    totalItems: number;
-    averageScores?: {
-        faithfulness: number;
-        relevance: number;
-        coherence: number;
-    };
-}
+export type { EvaluationItem, Dataset, EvaluationRun };
 
 // --- Models available for evaluation ---
 export const AVAILABLE_MODELS = [

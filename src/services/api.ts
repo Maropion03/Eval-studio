@@ -2,10 +2,10 @@
  * Eval Studio API Client
  *
  * Centralized fetch wrapper for all backend API calls.
- * Includes snake_case → camelCase adapters to match existing frontend types.
+ * Includes snake_case → camelCase adapters to match frontend types.
  */
 
-import type { EvaluationItem, EvaluationRun, Dataset } from '../data/mockData';
+import type { EvaluationItem, EvaluationRun, Dataset, PlaygroundResult, AppSettings } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 
@@ -23,11 +23,13 @@ async function request<T>(
     const url = `${BASE_URL}${path}`;
 
     const headers: Record<string, string> = {};
+
+    // Auto-inject JSON Content-Type if not FormData
     if (!(options.body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
     }
 
-    // Generic LLM credentials
+    // Generic LLM credentials (from localStorage)
     const llmApiKey = localStorage.getItem('llm_api_key');
     const llmBaseUrl = localStorage.getItem('llm_base_url');
     const llmModel = localStorage.getItem('llm_model');
@@ -37,12 +39,14 @@ async function request<T>(
     if (llmModel) headers['x-llm-model'] = llmModel;
 
     // Session ID Injection (Volatile)
-    // Generated once per page load (in global scope below)
     headers['x-session-id'] = SESSION_ID;
 
+    // Merge custom headers
+    const finalHeaders = { ...headers, ...(options.headers as Record<string, string>) };
+
     const res = await fetch(url, {
-        headers: { ...headers, ...(options.headers as Record<string, string>) },
         ...options,
+        headers: finalHeaders,
     });
 
     if (!res.ok) {
@@ -54,7 +58,7 @@ async function request<T>(
     return res.json();
 }
 
-// ── snake_case → camelCase adapters ─────────────
+// ── Types for Backend Responses (Snake Case) ────
 
 interface ApiDataset {
     id: string;
@@ -62,16 +66,6 @@ interface ApiDataset {
     item_count: number;
     status: string;
     created_at: string;
-}
-
-function adaptDataset(d: ApiDataset): Dataset {
-    return {
-        id: d.id,
-        name: d.name,
-        itemCount: d.item_count,
-        status: d.status as Dataset['status'],
-        createdAt: d.created_at,
-    };
 }
 
 interface ApiScores {
@@ -94,27 +88,6 @@ interface ApiRun {
     completed_at: string | null;
 }
 
-function adaptRun(r: ApiRun): EvaluationRun {
-    return {
-        id: r.id,
-        datasetId: r.dataset_id,
-        datasetName: r.dataset_name,
-        model: r.model,
-        metrics: r.metrics,
-        status: r.status as EvaluationRun['status'],
-        createdAt: r.created_at,
-        completedAt: r.completed_at ?? undefined,
-        totalItems: r.total_items,
-        averageScores: r.average_scores
-            ? {
-                faithfulness: r.average_scores.faithfulness ?? 0,
-                relevance: r.average_scores.relevance ?? 0,
-                coherence: r.average_scores.coherence ?? 0,
-            }
-            : undefined,
-    };
-}
-
 interface ApiHallucinationSpan {
     start: number;
     end: number;
@@ -133,6 +106,40 @@ interface ApiItem {
     failure_type: string | null;
     hallucination_spans: ApiHallucinationSpan[] | null;
     usage: { prompt_tokens: number; completion_tokens: number } | null;
+}
+
+// ── Adapters (Snake Case -> Camel Case) ─────────
+
+function adaptDataset(d: ApiDataset): Dataset {
+    return {
+        id: d.id,
+        name: d.name,
+        itemCount: d.item_count,
+        status: d.status as Dataset['status'],
+        createdAt: d.created_at,
+    };
+}
+
+function adaptRun(r: ApiRun): EvaluationRun {
+    return {
+        id: r.id,
+        datasetId: r.dataset_id,
+        datasetName: r.dataset_name,
+        model: r.model,
+        metrics: r.metrics,
+        status: r.status as EvaluationRun['status'],
+        createdAt: r.created_at,
+        completedAt: r.completed_at ?? undefined,
+        totalItems: r.total_items,
+        completedItems: r.completed_items,
+        averageScores: r.average_scores
+            ? {
+                faithfulness: r.average_scores.faithfulness ?? 0,
+                relevance: r.average_scores.relevance ?? 0,
+                coherence: r.average_scores.coherence ?? 0,
+            }
+            : undefined,
+    };
 }
 
 function adaptItem(item: ApiItem): EvaluationItem {
@@ -154,17 +161,9 @@ function adaptItem(item: ApiItem): EvaluationItem {
     };
 }
 
-// ── Playground result type ──────────────────────
+// ── API Methods ─────────────────────────────────
 
-export interface PlaygroundResult {
-    score: number;
-    reasoning: string;
-    model: string;
-    latency_ms: number;
-    tokens: { prompt: number; completion: number };
-}
-
-// ── Datasets ────────────────────────────────────
+// --- Datasets ---
 
 export async function listDatasets(): Promise<Dataset[]> {
     const raw = await request<ApiDataset[]>('/datasets');
@@ -187,10 +186,8 @@ export async function uploadDatasetFile(file: File, name?: string): Promise<Data
     formData.append('file', file);
     if (name) formData.append('name', name);
 
-    // Using request() ensures:
-    // 1. x-session-id is injected (via helper)
-    // 2. Content-Type is NOT set to application/json (body is FormData)
-    // 3. Browser sets Content-Type: multipart/form-data; boundary=...
+    // No headers object needed here -> request() handles x-session-id
+    // and browser handles multipart/form-data boundary
     const raw = await request<ApiDataset>('/datasets/upload', {
         method: 'POST',
         body: formData,
@@ -210,7 +207,7 @@ export async function deleteDataset(id: string): Promise<void> {
     return request<void>(`/datasets/${id}`, { method: 'DELETE' });
 }
 
-// ── Evaluation Runs ─────────────────────────────
+// --- Runs ---
 
 export async function listRuns(): Promise<EvaluationRun[]> {
     const raw = await request<ApiRun[]>('/runs');
@@ -230,9 +227,9 @@ export async function createRun(params: {
     return adaptRun(raw);
 }
 
-export async function getRun(id: string): Promise<EvaluationRun & { completedItems: number }> {
+export async function getRun(id: string): Promise<EvaluationRun> {
     const raw = await request<ApiRun>(`/runs/${id}`);
-    return { ...adaptRun(raw), completedItems: raw.completed_items };
+    return adaptRun(raw);
 }
 
 export async function getRunItems(
@@ -244,14 +241,11 @@ export async function getRunItems(
     return raw.map(adaptItem);
 }
 
-/**
- * Poll a run until it completes or fails.
- */
 export async function pollRunUntilDone(
     id: string,
     intervalMs = 1000,
-    onProgress?: (run: EvaluationRun & { completedItems: number }) => void,
-): Promise<EvaluationRun & { completedItems: number }> {
+    onProgress?: (run: EvaluationRun) => void,
+): Promise<EvaluationRun> {
     // eslint-disable-next-line no-constant-condition
     while (true) {
         const run = await getRun(id);
@@ -265,7 +259,7 @@ export async function pollRunUntilDone(
     }
 }
 
-// ── Playground ──────────────────────────────────
+// --- Playground ---
 
 export async function playgroundEvaluate(params: {
     system_prompt: string;
@@ -298,7 +292,7 @@ export async function playgroundEvaluate(params: {
     };
 }
 
-// ── Compare ─────────────────────────────────────
+// --- Comparison ---
 
 export async function compareRuns(
     baseId: string,
@@ -324,12 +318,7 @@ export async function compareRuns(
     };
 }
 
-// ── Settings ────────────────────────────────────
-
-export interface AppSettings {
-    system_prompt: string | null;
-    low_score_threshold: number;
-}
+// --- Settings ---
 
 export async function getSettings(): Promise<AppSettings> {
     return request<AppSettings>('/settings');
@@ -344,11 +333,11 @@ export async function updateSettings(
     });
 }
 
-// ── Health ──────────────────────────────────────
+// --- Health ---
 
 export async function checkHealth(): Promise<boolean> {
     try {
-        const res = await fetch('/health');
+        const res = await fetch(`${BASE_URL}/health`);
         return res.ok;
     } catch {
         return false;
