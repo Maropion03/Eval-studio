@@ -95,7 +95,14 @@
         "model_label": "模型名称 (Model)",
         "api_key_label": "API 密钥 (Key)",
         "base_url_label": "接口地址 (Base URL)",
-        "save": "保存设置"
+        "save": "保存设置",
+        "silicon_title": "SiliconFlow 配置",
+        "silicon_desc": "配置您的 SiliconFlow API 连接",
+        "global_title": "全局评测配置",
+        "global_desc": "默认阈值和 System Prompt 设置",
+        "save_btn": "保存设置",
+        "saved_success": "设置保存成功",
+        "saved_error": "保存设置失败"
     },
     "modal": {
         "title": "评测配置",
