@@ -26,11 +26,12 @@ async function request<T>(
     const cleanEndpoint = path.startsWith('/') ? path : `/${path}`;
     const url = `${cleanBase}${cleanEndpoint}`;
 
-    const headers: Record<string, string> = {};
+    // Use Headers API for safer merging and manipulation
+    const headers = new Headers(options.headers);
 
     // Auto-inject JSON Content-Type if not FormData
-    if (!(options.body instanceof FormData)) {
-        headers['Content-Type'] = 'application/json';
+    if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
     }
 
     // Generic LLM credentials (from localStorage)
@@ -38,23 +39,21 @@ async function request<T>(
     const llmBaseUrl = localStorage.getItem('llm_base_url');
     const llmModel = localStorage.getItem('llm_model');
 
-    if (llmApiKey) headers['x-llm-key'] = llmApiKey;
-    if (llmBaseUrl) headers['x-llm-base-url'] = llmBaseUrl;
-    if (llmModel) headers['x-llm-model'] = llmModel;
+    if (llmApiKey) headers.set('x-llm-key', llmApiKey);
+    if (llmBaseUrl) headers.set('x-llm-base-url', llmBaseUrl);
+    if (llmModel) headers.set('x-llm-model', llmModel);
 
     // Session ID Injection (Volatile)
-    headers['x-session-id'] = SESSION_ID;
-
-    // Merge custom headers
-    const finalHeaders = { ...headers, ...(options.headers as Record<string, string>) };
+    headers.set('x-session-id', SESSION_ID);
 
     const res = await fetch(url, {
         ...options,
-        headers: finalHeaders,
+        headers,
     });
 
     if (!res.ok) {
-        const body = await res.text();
+        const body = await res.text().catch(() => '');
+        console.error(`[API Error ${res.status}]`, url, body);
         throw new Error(`API ${res.status}: ${body}`);
     }
 
