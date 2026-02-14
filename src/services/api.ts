@@ -1,3 +1,4 @@
+// Fix: Force update session header
 /**
  * Eval Studio API Client
  *
