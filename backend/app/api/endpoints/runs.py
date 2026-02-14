@@ -5,7 +5,7 @@ Triggers background tasks for LLM evaluation.
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Header
 from sqlalchemy.orm import Session
-
+from app.db.session import SessionLocal
 from app.db.session import get_db
 from app.api.deps import get_session_id
 from app.models.models import EvaluationRun, Dataset, EvaluationItem
