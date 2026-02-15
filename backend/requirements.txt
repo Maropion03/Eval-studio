@@ -8,3 +8,4 @@ litellm==1.48.7
 python-multipart==0.0.12
 aiofiles==24.1.0
 imghdr-lts==1.0.0
+gunicorn==23.0.0
