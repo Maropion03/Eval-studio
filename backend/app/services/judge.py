@@ -3,11 +3,65 @@ from sqlalchemy.orm import Session
 from app.models.models import EvaluationRun, EvaluationItem, Dataset
 import json
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
-# Keep helpers like _calculate_score if they exist, but here we replace the file content.
-# The user's provided code replaces the core logic. 
-# I will include necessary imports and the full function as requested.
+# ─── Helper Functions ─────────────────────────────────────────────
+
+def _parse_scores(content: str) -> Dict[str, float]:
+    """Helper to parse JSON scores from LLM response safely."""
+    try:
+        clean_content = content.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_content)
+    except:
+        print(f"[Eval] JSON Parse Failed. Content: {content[:50]}...")
+        return {"faithfulness": 0.0, "relevance": 0.0, "coherence": 0.0}
+
+# ─── 1. Single Evaluation (For Playground) ────────────────────────
+
+def evaluate_single(
+    system_prompt: str,
+    query: str,
+    context: str,
+    model: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Run a single evaluation synchronously. Used by the Playground.
+    """
+    if not api_key:
+         raise ValueError("No API Key provided.")
+
+    target_base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
+    user_content = f"Query: {query}\nContext: {context}"
+
+    try:
+        # CRITICAL: Force 'openai' provider for SiliconFlow compatibility
+        response = completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            api_key=api_key,
+            base_url=target_base_url,
+            custom_llm_provider="openai" 
+        )
+
+        content = response.choices[0].message.content
+        scores = _parse_scores(content)
+
+        return {
+            "response": content,
+            "scores": scores,
+            "usage": dict(response.usage) if hasattr(response, 'usage') else {},
+            "latency_ms": 0 # Placeholder
+        }
+    except Exception as e:
+        print(f"Single Eval Failed: {e}")
+        raise e
+
+# ─── 2. Background Batch Evaluation (For Runs) ────────────────────
 
 def run_evaluation_background(
     db: Session, 
@@ -16,24 +70,20 @@ def run_evaluation_background(
     api_key: Optional[str] = None, 
     base_url: Optional[str] = None
 ):
+    """
+    Run a full dataset evaluation in the background.
+    """
     run = db.query(EvaluationRun).filter(EvaluationRun.id == run_id).first()
     if not run:
         return
 
     try:
-        # 1. Validate Credentials
         if not api_key:
-            raise ValueError("❌ No API Key provided! Please check Settings.")
+            raise ValueError("No API Key provided! Please check Settings.")
             
-        # Mask API Key for logging
-        masked_key = f"{api_key[:8]}..." if api_key and len(api_key) > 8 else "N/A"
         print(f"[Eval] Starting Run {run_id}")
-        print(f"[Eval] Provider Config - BaseURL: {base_url}, Key: {masked_key}")
-
+        
         dataset = db.query(Dataset).filter(Dataset.id == run.dataset_id).first()
-        if not dataset:
-             raise ValueError(f"Dataset {run.dataset_id} not found")
-             
         items = dataset.get_items()
         
         run.total_items = len(items)
@@ -44,7 +94,6 @@ def run_evaluation_background(
         total_relevance = 0.0
         total_coherence = 0.0
 
-        # Default fallback for SiliconFlow
         target_base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
 
         for item_data in items:
@@ -53,7 +102,7 @@ def run_evaluation_background(
             user_content = f"Query: {query}\nContext: {context}"
             
             try:
-                # 2. Real LLM Call (No Mock Fallback)
+                # CRITICAL: Force 'openai' provider here too
                 response = completion(
                     model=run.model,
                     messages=[
@@ -62,20 +111,11 @@ def run_evaluation_background(
                     ],
                     api_key=api_key,
                     base_url=target_base_url,
-                    custom_llm_provider="openai" # Force OpenAI protocol as requested
+                    custom_llm_provider="openai"
                 )
                 
                 content = response.choices[0].message.content
-                
-                # 3. Score Parsing
-                scores = {"faithfulness": 0.0, "relevance": 0.0, "coherence": 0.0}
-                try:
-                    # Naive JSON parser
-                    clean_content = content.replace("```json", "").replace("```", "").strip()
-                    parsed = json.loads(clean_content)
-                    scores = parsed
-                except:
-                    print(f"[Eval] JSON Parse Failed for item. Content: {content[:50]}...")
+                scores = _parse_scores(content)
 
                 eval_item = EvaluationItem(
                     run_id=run.id,
@@ -89,18 +129,16 @@ def run_evaluation_background(
                 )
                 db.add(eval_item)
                 
-                total_faithfulness += float(scores.get('faithfulness', 0))
-                total_relevance += float(scores.get('relevance', 0))
-                total_coherence += float(scores.get('coherence', 0))
+                total_faithfulness += scores.get('faithfulness', 0)
+                total_relevance += scores.get('relevance', 0)
+                total_coherence += scores.get('coherence', 0)
                 completed_count += 1
                 
                 run.completed_items = completed_count
                 db.commit()
 
             except Exception as e:
-                print(f"❌ LLM Call Failed: {e}")
-                # Don't mock, just skip this item or fail hard depending on preference.
-                # Here we skip to avoid crashing the whole run, but we log it visibly.
+                print(f"❌ LLM Call Failed for item: {e}")
                 continue
 
         if completed_count > 0:
@@ -115,6 +153,6 @@ def run_evaluation_background(
 
     except Exception as e:
         print(f"🔥 Run Crashed: {e}")
-        db.rollback() # <--- CRITICAL FIX: Clean the dirty session
+        db.rollback() 
         run.status = "failed"
         db.commit()
