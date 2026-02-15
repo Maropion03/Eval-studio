@@ -55,13 +55,17 @@ class Dataset(DatasetBase):
     class Config:
         from_attributes = True
 
+# ✅ Restore DatasetResponse (Alias for Dataset)
+class DatasetResponse(Dataset):
+    pass
+
 # ─── Evaluation Runs ──────────────────────────────────────────────
 class EvaluationRunBase(BaseModel):
     dataset_id: str
     model: str
     metrics: List[str] = ["faithfulness", "relevance", "coherence"]
 
-# ✅ This was missing and caused the crash
+# ✅ Ensure EvaluationRunCreate is kept
 class EvaluationRunCreate(EvaluationRunBase):
     pass
 
