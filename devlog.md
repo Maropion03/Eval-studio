@@ -1040,3 +1040,19 @@ Debug Evaluation Stalled ("Running" 0/6)
 **2.Logic**: 部署过程中发现 `app.api.deps` 缺少关键依赖函数，导致 Endpoints 无法正常工作。通过重写 `deps.py` 恢复了数据库 Session 管理和 Session ID 提取逻辑。
 **3.Tech**: FastAPI Dependencies, SQLAlchemy.
 **4.Files**: `backend/app/api/deps.py`
+
+### [2026-02-17 11:00] 同步代码至 GitHub 以触发部署修复
+
+**1.Goal**: 将本地修复的 `schemas.py` 和 `deps.py` 推送到 GitHub，触发 Render 的自动部署以消除 `AttributeError`。
+**2.Logic**: 之前的修复仅在本地生效，Render 部署是从 GitHub 拉取代码的。由于远程仓库缺少 `get_db` 等函数，部署会报错。通过执行 `git push` 同步最新修复。
+**3.Tech**: Git Automation.
+**4.Files**: `backend/app/schemas/schemas.py`, `backend/app/api/deps.py`
+
+### [2026-02-17 11:02] 恢复比较功能所需的 Pydantic 模型
+
+**1.Goal**: 在 `schemas.py` 中恢复 `CompareResponse`、`RunResponse` 和 `ItemResponse` 模型。
+**2.Logic**: 之前的更新不慎遗漏了对比视图（Compare）所需的模型，导致 `compare.py` 运行时崩溃。本次更新通过整合所有必需模型，完成了 `schemas.py` 的最终合并。
+**3.Tech**: Pydantic, FastAPI.
+**4.Files**: `backend/app/schemas/schemas.py`
+
+

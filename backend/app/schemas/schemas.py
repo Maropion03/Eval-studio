@@ -55,7 +55,6 @@ class Dataset(DatasetBase):
     class Config:
         from_attributes = True
 
-# ✅ Restore DatasetResponse (Alias for Dataset)
 class DatasetResponse(Dataset):
     pass
 
@@ -65,7 +64,6 @@ class EvaluationRunBase(BaseModel):
     model: str
     metrics: List[str] = ["faithfulness", "relevance", "coherence"]
 
-# ✅ Ensure EvaluationRunCreate is kept
 class EvaluationRunCreate(EvaluationRunBase):
     pass
 
@@ -94,3 +92,18 @@ class PlaygroundResponse(BaseModel):
     scores: Dict[str, float]
     usage: Dict[str, int]
     latency_ms: float
+
+# ─── Compare (Diff View) ──────────────────────────────────────────
+# Aliases for compatibility with compare.py
+class RunResponse(EvaluationRun):
+    pass
+
+class ItemResponse(EvaluationItem):
+    pass
+
+class CompareResponse(BaseModel):
+    run_a: RunResponse
+    run_b: RunResponse
+    items_a: List[ItemResponse]
+    items_b: List[ItemResponse]
+    common_items_count: int
