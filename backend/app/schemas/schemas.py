@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-# ─── App Settings ─────────────────────────────────────────────────
+# ─── 1. App Settings ──────────────────────────────────────────────
 class AppSettingsBase(BaseModel):
     system_prompt: Optional[str] = None
     low_score_threshold: float = 0.6
@@ -17,7 +17,7 @@ class AppSettings(AppSettingsBase):
     class Config:
         from_attributes = True
 
-# ─── Evaluation Items ─────────────────────────────────────────────
+# ─── 2. Evaluation Items ──────────────────────────────────────────
 class EvaluationItemBase(BaseModel):
     query: str
     context: str
@@ -38,7 +38,7 @@ class EvaluationItem(EvaluationItemBase):
     class Config:
         from_attributes = True
 
-# ─── Datasets ─────────────────────────────────────────────────────
+# ─── 3. Datasets ──────────────────────────────────────────────────
 class DatasetBase(BaseModel):
     name: str
 
@@ -55,10 +55,11 @@ class Dataset(DatasetBase):
     class Config:
         from_attributes = True
 
+# Alias for API responses
 class DatasetResponse(Dataset):
     pass
 
-# ─── Evaluation Runs ──────────────────────────────────────────────
+# ─── 4. Evaluation Runs ───────────────────────────────────────────
 class EvaluationRunBase(BaseModel):
     dataset_id: str
     model: str
@@ -80,7 +81,11 @@ class EvaluationRun(EvaluationRunBase):
     class Config:
         from_attributes = True
 
-# ─── Playground ───────────────────────────────────────────────────
+# Alias for API responses
+class RunResponse(EvaluationRun):
+    pass
+
+# ─── 5. Playground ────────────────────────────────────────────────
 class PlaygroundRequest(BaseModel):
     system_prompt: str
     user_input: str
@@ -93,11 +98,8 @@ class PlaygroundResponse(BaseModel):
     usage: Dict[str, int]
     latency_ms: float
 
-# ─── Compare (Diff View) ──────────────────────────────────────────
-# Aliases for compatibility with compare.py
-class RunResponse(EvaluationRun):
-    pass
-
+# ─── 6. Compare (Diff View) ───────────────────────────────────────
+# Define ItemResponse alias for Compare
 class ItemResponse(EvaluationItem):
     pass
 

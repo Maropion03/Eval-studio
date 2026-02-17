@@ -1055,4 +1055,12 @@ Debug Evaluation Stalled ("Running" 0/6)
 **3.Tech**: Pydantic, FastAPI.
 **4.Files**: `backend/app/schemas/schemas.py`
 
+### [2026-02-17 11:15] 重构 Schema 层：统一 Pydantic 模型
+
+**1.Goal**: 对后端 Schema 层进行全面重构，将所有 Pydantic 模型整合到单一文件中，以解决循环依赖和模型散乱问题。
+**2.Logic**: 按照 Strict Service-Controller 模式，将 Settings, EvaluationItem, Dataset, Run, Playground, Compare 等所有业务实体的 Base/Create/Response 模型统一收敛至 `schemas.py`。
+**3.Tech**: Pydantic Refactoring.
+**4.Files**: `backend/app/schemas/schemas.py`
+
+
 
