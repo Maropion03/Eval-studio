@@ -1,11 +1,23 @@
+from typing import Generator, Optional
+from fastapi import Header
+from app.db.session import SessionLocal
 
-from fastapi import Header, HTTPException
+def get_db() -> Generator:
+    """
+    Dependency to provide a database session.
+    Ensures the session is closed after the request is finished.
+    """
+    try:
+        db = SessionLocal()
+        yield db
+    finally:
+        db.close()
 
-async def get_session_id(x_session_id: str = Header(...)) -> str:
+def get_session_id(x_session_id: Optional[str] = Header(None)) -> str:
     """
-    Extract session ID from header.
-    Rejects requests without a valid session.
+    Dependency to extract the Session ID from headers.
+    Returns a default value if not provided (for dev/local mode).
     """
-    if not x_session_id:
-        raise HTTPException(status_code=400, detail="Missing x-session-id header")
-    return x_session_id
+    # In a real app, you might want to generate a UUID here if missing,
+    # or enforce that the frontend always sends it.
+    return x_session_id or "default-session"
