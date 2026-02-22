@@ -14,6 +14,17 @@ from app.services.judge import run_evaluation_background
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
+# Default prompt if none is configured
+DEFAULT_SYSTEM_PROMPT = """You are an expert AI judge. Evaluate the response based on the query and context provided.
+
+Score the response on the following metrics and output valid JSON:
+- faithfulness (0-1): How faithful is the response to the context?
+- relevance (0-1): How relevant is the response to the query?
+- coherence (1-5): How coherent and well-structured is the response?
+
+Output format:
+{"faithfulness": <float>, "relevance": <float>, "coherence": <float>, "reasoning": "<string>"}"""
+
 
 @router.get("", response_model=List[RunSchema])
 def list_runs(
@@ -66,11 +77,13 @@ def create_run(
     db.commit()
     db.refresh(run)
 
+    print(f"📝 Created Run {run.id} for dataset '{dataset.name}' with model '{target_model}'")
+
     # 4. Trigger Background Task
     background_tasks.add_task(
         _run_evaluation_wrapper,
         run_id=run.id,
-        default_system_prompt="You are an expert judge. Evaluate the response based on the query and context.",
+        run_system_prompt=run_in.system_prompt,
         api_key=x_llm_key,
         base_url=x_llm_base_url,
     )
@@ -122,20 +135,30 @@ def get_run_items(
 
 def _run_evaluation_wrapper(
     run_id: str,
-    default_system_prompt: str,
+    run_system_prompt: Optional[str],
     api_key: Optional[str],
     base_url: Optional[str],
 ):
-    """Wrapper to handle DB session lifecycle and call the service layer."""
+    """Wrapper to handle DB session lifecycle and resolve system prompt."""
     db = SessionLocal()
     try:
-        # Fetch dynamic system prompt from AppSettings
+        # Resolve system prompt priority:
+        # 1. Run's own system_prompt (from user's modal submission)
+        # 2. AppSettings.system_prompt (global config)
+        # 3. Built-in default
+        effective_prompt = DEFAULT_SYSTEM_PROMPT
+
         settings_record = db.query(AppSettings).first()
-        effective_prompt = default_system_prompt
         if settings_record and settings_record.system_prompt:
             effective_prompt = settings_record.system_prompt
 
-        # Call the service function
+        # Run-level prompt takes highest priority
+        if run_system_prompt:
+            effective_prompt = run_system_prompt
+
+        print(f"🔧 Run {run_id}: Using prompt ({len(effective_prompt)} chars)")
+
+        # Call the concurrent evaluation engine
         run_evaluation_background(
             db=db,
             run_id=run_id,
@@ -144,6 +167,6 @@ def _run_evaluation_wrapper(
             base_url=base_url,
         )
     except Exception as e:
-        print(f"❌ Wrapper Error: {e}")
+        print(f"❌ Wrapper Error for Run {run_id}: {e}")
     finally:
         db.close()
