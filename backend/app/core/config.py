@@ -1,5 +1,5 @@
 """
-Judge-Opus Backend Configuration
+Eval Studio — Backend Configuration
 Loads settings from .env file
 """
 

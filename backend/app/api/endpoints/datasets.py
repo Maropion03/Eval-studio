@@ -1,6 +1,7 @@
 """
-Datasets API endpoints.
-Supports JSON body creation and JSONL file upload.
+Eval Studio — Datasets API Endpoints
+
+Supports JSON body creation and JSONL/JSON file upload.
 """
 
 import json
@@ -8,8 +9,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
-from app.api.deps import get_session_id
+from app.api.deps import get_db, get_session_id
 from app.models.models import Dataset
 from app.schemas.schemas import DatasetCreate, DatasetResponse
 
@@ -35,7 +35,7 @@ DEMO_DATA = [
         "context": "Quantum entanglement is a physical phenomenon that occurs when a group of particles are generated, interact, or share spatial proximity in a way such that the quantum state of each particle of the group cannot be described independently of the state of the others.",
         "response": "It's when particles are connected in a way that the state of one instantly influences the other, regardless of distance.",
         "ground_truth": "Correct. It implies non-local correlations between particle properties.",
-    }
+    },
 ]
 
 
@@ -67,7 +67,12 @@ def list_datasets(
     List all datasets for the current session.
     Auto-seeds demo data if the session is empty.
     """
-    datasets = db.query(Dataset).filter(Dataset.session_id == session_id).order_by(Dataset.created_at.desc()).all()
+    datasets = (
+        db.query(Dataset)
+        .filter(Dataset.session_id == session_id)
+        .order_by(Dataset.created_at.desc())
+        .all()
+    )
 
     # Auto-Seed if empty
     if not datasets:
@@ -105,20 +110,18 @@ async def upload_dataset(
     session_id: str = Depends(get_session_id),
 ):
     """
-    Upload a JSONL file to create a dataset.
-    Each line should be a JSON object with: query, context, response, ground_truth.
+    Upload a JSONL/JSON file to create a dataset.
+    Each line/item should be a JSON object with: query, context, response, ground_truth.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
 
-    # Validate file extension
     if not file.filename.endswith((".jsonl", ".json")):
         raise HTTPException(
             status_code=400,
             detail="Only .jsonl and .json files are supported",
         )
 
-    # Read and parse file
     content = await file.read()
     try:
         text = content.decode("utf-8")
@@ -130,15 +133,12 @@ async def upload_dataset(
 
     # Parse content: Try JSON Array first, then fallback to JSON Lines
     try:
-        # Strategy 1: JSON Array
         parsed = json.loads(text)
         if isinstance(parsed, list):
             items = parsed
         elif isinstance(parsed, dict) and "items" in parsed and isinstance(parsed["items"], list):
             items = parsed["items"]
         else:
-            # Not a list, but valid JSON? Might be a single object, but we expect a list.
-            # Let's try JSONL if this structure isn't what we want.
             raise ValueError("Not a JSON array")
     except (json.JSONDecodeError, ValueError):
         # Strategy 2: JSON Lines (NDJSON)
@@ -194,7 +194,11 @@ def get_dataset(
     session_id: str = Depends(get_session_id),
 ):
     """Get a single dataset by ID (Scoped to Session)."""
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id, Dataset.session_id == session_id).first()
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.session_id == session_id)
+        .first()
+    )
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return dataset
@@ -209,7 +213,11 @@ def get_dataset_items(
     session_id: str = Depends(get_session_id),
 ):
     """Get the raw data rows of a dataset (paginated)."""
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id, Dataset.session_id == session_id).first()
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.session_id == session_id)
+        .first()
+    )
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
@@ -227,7 +235,11 @@ def delete_dataset(
     session_id: str = Depends(get_session_id),
 ):
     """Delete a dataset and all associated runs."""
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id, Dataset.session_id == session_id).first()
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.session_id == session_id)
+        .first()
+    )
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     db.delete(dataset)

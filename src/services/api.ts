@@ -341,13 +341,15 @@ export async function updateSettings(
 
 export async function checkHealth(): Promise<boolean> {
     try {
-        const res = await fetch(`${BASE_URL}/health`);
+        // /health is at root level, not under /api
+        const baseOrigin = BASE_URL.replace(/\/api\/?$/, '');
+        const res = await fetch(`${baseOrigin}/health`);
         return res.ok;
     } catch {
         return false;
     }
 }
-// ... (保留上面的所有代码)
+
 
 // ── Compatibility Layer (兼容旧代码) ────────────────
 

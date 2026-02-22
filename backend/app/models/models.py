@@ -1,6 +1,6 @@
 """
-SQLAlchemy ORM models for Judge-Opus.
-Mirrors the frontend mockData.ts types exactly.
+Eval Studio — SQLAlchemy ORM Models
+Mirrors the frontend types.ts definitions.
 """
 
 import uuid

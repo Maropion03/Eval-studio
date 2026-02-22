@@ -1,82 +1,99 @@
+"""
+Eval Studio — Pydantic Schemas
+
+All request/response models for the API layer.
+Aligned with ORM models in app/models/models.py.
+"""
+
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 # ─── 1. App Settings ──────────────────────────────────────────────
-class AppSettingsBase(BaseModel):
+
+class SettingsUpdate(BaseModel):
+    """Partial update payload for settings."""
     system_prompt: Optional[str] = None
-    low_score_threshold: float = 0.6
+    low_score_threshold: Optional[float] = None
 
-class AppSettingsCreate(AppSettingsBase):
-    pass
-
-class AppSettings(AppSettingsBase):
+class SettingsResponse(BaseModel):
+    """Response model for settings."""
     id: int
+    system_prompt: Optional[str] = None
+    low_score_threshold: float = 0.7
     updated_at: datetime
 
     class Config:
         from_attributes = True
 
 # ─── 2. Evaluation Items ──────────────────────────────────────────
+
 class EvaluationItemBase(BaseModel):
     query: str
     context: str
     response: str
-    ground_truth: Optional[str] = None
-    scores: Dict[str, float]
+    ground_truth: Optional[str] = ""
+    scores: Optional[Dict[str, float]] = None
     reasoning: Optional[str] = None
-    usage: Dict[str, int] = {}
+    failure_type: Optional[str] = None
+    hallucination_spans: Optional[List[Dict[str, Any]]] = None
+    usage: Optional[Dict[str, int]] = None
 
 class EvaluationItemCreate(EvaluationItemBase):
     run_id: str
 
 class EvaluationItem(EvaluationItemBase):
-    id: int
+    id: str
     run_id: str
-    created_at: datetime
+    session_id: str
 
     class Config:
         from_attributes = True
+
+# Alias for API responses (used by compare endpoint)
+class ItemResponse(EvaluationItem):
+    pass
 
 # ─── 3. Datasets ──────────────────────────────────────────────────
-class DatasetBase(BaseModel):
+
+class DatasetCreate(BaseModel):
+    """Create dataset from JSON body — includes inline items."""
     name: str
+    items: List[Dict[str, Any]] = []
 
-class DatasetCreate(DatasetBase):
-    pass
-
-class Dataset(DatasetBase):
+class DatasetResponse(BaseModel):
+    """Response model for datasets."""
     id: str
-    created_at: datetime
-    file_path: str
+    name: str
     item_count: int = 0
     status: str = "ready"
+    created_at: datetime
 
     class Config:
         from_attributes = True
 
-# Alias for API responses
-class DatasetResponse(Dataset):
-    pass
-
 # ─── 4. Evaluation Runs ───────────────────────────────────────────
-class EvaluationRunBase(BaseModel):
+
+class EvaluationRunCreate(BaseModel):
     dataset_id: str
     model: str
     metrics: List[str] = ["faithfulness", "relevance", "coherence"]
+    system_prompt: Optional[str] = None
 
-class EvaluationRunCreate(EvaluationRunBase):
-    pass
-
-class EvaluationRun(EvaluationRunBase):
+class EvaluationRun(BaseModel):
     id: str
-    created_at: datetime
-    completed_at: Optional[datetime] = None
+    dataset_id: str
+    dataset_name: str
+    model: str
+    metrics: List[str]
     status: str
     total_items: int = 0
     completed_items: int = 0
     average_scores: Optional[Dict[str, float]] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
     session_id: str
+    system_prompt: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -86,26 +103,26 @@ class RunResponse(EvaluationRun):
     pass
 
 # ─── 5. Playground ────────────────────────────────────────────────
+
 class PlaygroundRequest(BaseModel):
     system_prompt: str
-    user_input: str
-    context: str
-    model: str
+    query: str = ""
+    context: str = ""
+    response: str = ""
+    model: str = "gpt-4"
+    metric: str = ""
 
 class PlaygroundResponse(BaseModel):
-    response: str
-    scores: Dict[str, float]
-    usage: Dict[str, int]
-    latency_ms: float
+    score: float = 0.0
+    reasoning: str = ""
+    model: str = ""
+    latency_ms: float = 0.0
+    usage: Dict[str, int] = {}
 
-# ─── 6. Compare (Diff View) ───────────────────────────────────────
-# Define ItemResponse alias for Compare
-class ItemResponse(EvaluationItem):
-    pass
+# ─── 6. Compare (A/B Diff View) ──────────────────────────────────
 
 class CompareResponse(BaseModel):
-    run_a: RunResponse
-    run_b: RunResponse
-    items_a: List[ItemResponse]
-    items_b: List[ItemResponse]
-    common_items_count: int
+    base_run: RunResponse
+    target_run: RunResponse
+    base_items: List[ItemResponse]
+    target_items: List[ItemResponse]

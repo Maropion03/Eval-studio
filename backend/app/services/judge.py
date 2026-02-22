@@ -1,3 +1,11 @@
+"""
+Eval Studio — LLM Evaluation Service
+
+Contains the core evaluation logic:
+  1. evaluate_single — async single-shot evaluation (for Playground)
+  2. run_evaluation_background — synchronous batch evaluation (for Runs)
+"""
+
 from litellm import acompletion
 from sqlalchemy.orm import Session
 from app.models.models import EvaluationRun, EvaluationItem, Dataset
@@ -5,41 +13,45 @@ import json
 import logging
 from typing import Optional, Dict, Any
 
+logger = logging.getLogger(__name__)
+
 # ─── Helper Functions ─────────────────────────────────────────────
 
+
 def _parse_scores(content: str) -> Dict[str, float]:
-    """Helper to parse JSON scores from LLM response safely."""
+    """Parse JSON scores from LLM response safely."""
     try:
         clean_content = content.replace("```json", "").replace("```", "").strip()
         return json.loads(clean_content)
-    except:
-        print(f"[Eval] JSON Parse Failed. Content: {content[:50]}...")
+    except Exception:
+        logger.warning(f"JSON Parse Failed. Content: {content[:80]}...")
         return {"faithfulness": 0.0, "relevance": 0.0, "coherence": 0.0}
 
+
 # ─── 1. Single Evaluation (For Playground & Runs) ─────────────────
+
 
 async def evaluate_single(
     system_prompt: str,
     query: str,
     context: str,
     model: str,
-    response: str = "", # Added missing arg
-    metric: str = "",   # Added missing arg
+    response: str = "",
+    metric: str = "",
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
-    # Allow extra kwargs to prevent crashing if caller passes more
-    **kwargs
+    **kwargs,
 ) -> Dict[str, Any]:
     """
-    Run a single evaluation asynchronously. 
+    Run a single evaluation asynchronously.
     Used by the Playground AND runs.py (inside _run_evaluation).
     """
     if not api_key:
-         raise ValueError("No API Key provided.")
+        raise ValueError("No API Key provided.")
 
     target_base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
-    
-    # Construct User Content including the Response to be evaluated
+
+    # Construct user content
     user_content = f"Query: {query}\nContext: {context}"
     if response:
         user_content += f"\nResponse: {response}"
@@ -47,64 +59,66 @@ async def evaluate_single(
         user_content += f"\n\nPlease evaluate the following metric: {metric}"
 
     try:
-        # CRITICAL: Force 'openai' provider for SiliconFlow compatibility
-        # Use acompletion for async execution
         llm_response = await acompletion(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
+                {"role": "user", "content": user_content},
             ],
             api_key=api_key,
             base_url=target_base_url,
-            custom_llm_provider="openai" 
+            custom_llm_provider="openai",
         )
 
         content = llm_response.choices[0].message.content
         scores = _parse_scores(content)
 
         return {
-            "score": scores.get(metric, 0) if metric else 0, # Return scalar if specific metric requested (legacy compat)
-            "response": content, # The "response" here is the JUDGE'S reasoning/output
+            "score": scores.get(metric, 0) if metric else 0,
+            "response": content,
             "scores": scores,
-            "reasoning": content, # Map content to reasoning for runs.py compatibility
-            "usage": dict(llm_response.usage) if hasattr(llm_response, 'usage') else {},
-            "latency_ms": 0 
+            "reasoning": content,
+            "model": model,
+            "usage": dict(llm_response.usage) if hasattr(llm_response, "usage") and llm_response.usage else {},
+            "latency_ms": 0,
         }
     except Exception as e:
-        print(f"Single Eval Failed: {e}")
+        logger.error(f"Single Eval Failed: {e}")
         raise e
 
-# ─── 2. Background Batch Evaluation (Alternative Path) ────────────────
+
+# ─── 2. Background Batch Evaluation ───────────────────────────────
+
 
 def run_evaluation_background(
-    db: Session, 
-    run_id: str, 
-    system_prompt: str, 
-    api_key: Optional[str] = None, 
-    base_url: Optional[str] = None
+    db: Session,
+    run_id: str,
+    system_prompt: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
 ):
     """
-    Run a full dataset evaluation in the background.
-    This is the NEW implementation that might be called directly in the future.
+    Run a full dataset evaluation in the background (synchronous).
+    Called from runs.py via _run_evaluation_wrapper.
     """
-    # ... (Keep existing implementation for redundancy/future-proofing)
-    # The user-provided code for this function was synchronous in previous step.
-    # We will keep it as is, but focusing on fixing evaluate_single is the priority.
-    
     run = db.query(EvaluationRun).filter(EvaluationRun.id == run_id).first()
     if not run:
+        logger.error(f"Run {run_id} not found")
         return
 
     try:
         if not api_key:
             raise ValueError("No API Key provided! Please check Settings.")
-            
-        print(f"[Eval] Starting Run {run_id}")
-        
+
+        logger.info(f"[Eval] Starting Run {run_id}")
+
+        # Get dataset items from raw_data (JSON column)
         dataset = db.query(Dataset).filter(Dataset.id == run.dataset_id).first()
-        items = dataset.get_items()
-        
+        if not dataset:
+            raise ValueError(f"Dataset {run.dataset_id} not found")
+
+        items = dataset.raw_data or []
+
         run.total_items = len(items)
         db.commit()
 
@@ -115,68 +129,68 @@ def run_evaluation_background(
 
         target_base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
 
-        # Import completion here to avoid conflict with acompletion above if needed, 
-        # but litellm exports both.
         from litellm import completion
 
         for item_data in items:
             query = item_data.get("query", "")
             context = item_data.get("context", "")
+            item_response = item_data.get("response", "")
             user_content = f"Query: {query}\nContext: {context}"
-            # Also include response in loop logic if we were using this function
-            # But currently runs.py uses _run_evaluation calling evaluate_single
-            
+            if item_response:
+                user_content += f"\nResponse: {item_response}"
+
             try:
-                # CRITICAL: Force 'openai' provider here too
-                response = completion(
+                llm_result = completion(
                     model=run.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
+                        {"role": "user", "content": user_content},
                     ],
                     api_key=api_key,
                     base_url=target_base_url,
-                    custom_llm_provider="openai"
+                    custom_llm_provider="openai",
                 )
-                
-                content = response.choices[0].message.content
+
+                content = llm_result.choices[0].message.content
                 scores = _parse_scores(content)
 
                 eval_item = EvaluationItem(
                     run_id=run.id,
+                    session_id=run.session_id,
                     query=query,
                     context=context,
-                    response=content if isinstance(content, str) else json.dumps(content),
+                    response=item_response,
                     ground_truth=item_data.get("ground_truth", ""),
                     scores=scores,
-                    usage=dict(response.usage) if hasattr(response, 'usage') else {}
+                    reasoning=content,
+                    usage=dict(llm_result.usage) if hasattr(llm_result, "usage") and llm_result.usage else {},
                 )
                 db.add(eval_item)
-                
-                total_faithfulness += scores.get('faithfulness', 0)
-                total_relevance += scores.get('relevance', 0)
-                total_coherence += scores.get('coherence', 0)
+
+                total_faithfulness += scores.get("faithfulness", 0)
+                total_relevance += scores.get("relevance", 0)
+                total_coherence += scores.get("coherence", 0)
                 completed_count += 1
-                
+
                 run.completed_items = completed_count
                 db.commit()
 
             except Exception as e:
-                print(f"❌ LLM Call Failed for item: {e}")
+                logger.error(f"❌ LLM Call Failed for item: {e}")
                 continue
 
         if completed_count > 0:
             run.average_scores = {
                 "faithfulness": total_faithfulness / completed_count,
                 "relevance": total_relevance / completed_count,
-                "coherence": total_coherence / completed_count
+                "coherence": total_coherence / completed_count,
             }
-        
+
         run.status = "completed"
         db.commit()
 
     except Exception as e:
-        print(f"🔥 Run Crashed: {e}")
-        db.rollback() 
+        logger.error(f"🔥 Run Crashed: {e}")
+        db.rollback()
         run.status = "failed"
         db.commit()

@@ -1,15 +1,17 @@
 """
-Judge-Opus Backend — FastAPI Application Entry Point
+Eval Studio Backend — FastAPI Application Entry Point
 
 LLM Evaluation Platform API Server.
 Provides REST endpoints for dataset management, evaluation runs,
 A/B comparison, playground debugging, and settings.
 """
 
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.api import api_router
 from app.core.config import settings
@@ -37,23 +39,31 @@ app = FastAPI(
 # CORS — allow frontend dev server
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=settings.cors_origins,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*", "x-llm-key", "x-llm-model", "x-llm-base-url", "x-session-id", "Authorization", "Content-Type"],
+    allow_headers=[
+        "*",
+        "x-llm-key",
+        "x-llm-model",
+        "x-llm-base-url",
+        "x-session-id",
+        "Authorization",
+        "Content-Type",
+    ],
 )
 
-# Debug: Global Exception Handler
-import traceback
-from fastapi import Request
-from fastapi.responses import JSONResponse
 
 @app.exception_handler(Exception)
 async def debug_exception_handler(request: Request, exc: Exception):
+    """Global exception handler for debugging — prints full traceback."""
     error_msg = "".join(traceback.format_exception(None, exc, exc.__traceback__))
     print(f"❌ UNHANDLED EXCEPTION for {request.url.path}:\n{error_msg}")
-    return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "trace": str(exc)})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "trace": str(exc)},
+    )
+
 
 # Mount all API routes
 app.include_router(api_router)
@@ -62,4 +72,4 @@ app.include_router(api_router)
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "ok", "service": "judge-opus-api", "version": "0.1.0"}
+    return {"status": "ok", "service": "eval-studio-api", "version": "0.1.0"}

@@ -1061,6 +1061,18 @@ Debug Evaluation Stalled ("Running" 0/6)
 **2.Logic**: 按照 Strict Service-Controller 模式，将 Settings, EvaluationItem, Dataset, Run, Playground, Compare 等所有业务实体的 Base/Create/Response 模型统一收敛至 `schemas.py`。
 **3.Tech**: Pydantic Refactoring.
 **4.Files**: `backend/app/schemas/schemas.py`
+### [2026-02-22 11:58] 项目全面修复：Schema/Endpoint/代码清理
 
+**1.Goal**: 项目经过 31 次迭代后，代码质量严重退化，出现大量断裂的导入、Schema 与 ORM 不匹配、死代码和旧品牌命名。本次操作是对整个项目的全面审查和修复。
+**2.Logic**: 逐一阅读全部 20+ 个源文件，识别出 15+ 个关键问题后，按依赖顺序修复：先修 schemas（基础），再修所有 endpoint 文件，最后修前端。主要修复了：
+  - `schemas.py` 完全重写（缺失的 `SettingsResponse`/`SettingsUpdate`，错误的字段类型和字段名）
+  - `judge.py` 中 `dataset.get_items()` 修正为 `dataset.raw_data`
+  - `runs.py` 中移除不存在的 `metrics_code` 字段，添加 dataset_name 查询
+  - `playground.py` 中 `api_base` → `base_url` 参数修正
+  - `compare.py` 中 CompareResponse 字段名统一
+  - `deps.py` 去重 `get_db`，统一导入来源
+  - 全局品牌命名 Judge-Opus → Eval Studio
+**3.Tech**: Python/FastAPI/Pydantic/SQLAlchemy (后端), TypeScript/React/Vite (前端)
+**4.Files**: `schemas.py`, `deps.py`, `runs.py`, `judge.py`, `playground.py`, `compare.py`, `settings.py`, `datasets.py`, `main.py`, `config.py`, `models.py`, `.env`, `api.ts`
 
 

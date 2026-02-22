@@ -1,23 +1,26 @@
+"""
+Eval Studio — Evaluation Runs API Endpoints
+"""
+
 from fastapi import APIRouter, Depends, BackgroundTasks, Header, HTTPException
 from sqlalchemy.orm import Session
 from typing import Any, Optional, List
 
 from app.db.session import SessionLocal
-from app.api import deps
-from app.models.models import EvaluationRun, EvaluationItem, AppSettings
+from app.api.deps import get_db, get_session_id
+from app.models.models import EvaluationRun, EvaluationItem, AppSettings, Dataset
 from app.schemas.schemas import EvaluationRunCreate, EvaluationRun as RunSchema
-# ✅ Correctly import the background handler
 from app.services.judge import run_evaluation_background
-from app.core.config import settings
 
-router = APIRouter()
+router = APIRouter(prefix="/runs", tags=["runs"])
+
 
 @router.get("", response_model=List[RunSchema])
 def list_runs(
-    db: Session = Depends(deps.get_db),
+    db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    session_id: str = Depends(deps.get_session_id),
+    session_id: str = Depends(get_session_id),
 ):
     runs = (
         db.query(EvaluationRun)
@@ -29,89 +32,82 @@ def list_runs(
     )
     return runs
 
+
 @router.post("", response_model=RunSchema, status_code=201)
 def create_run(
     run_in: EvaluationRunCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(deps.get_db),
-    # Capture BYOK headers
+    db: Session = Depends(get_db),
     x_llm_key: Optional[str] = Header(None),
     x_llm_base_url: Optional[str] = Header(None),
     x_llm_model: Optional[str] = Header(None),
-    session_id: str = Depends(deps.get_session_id),
+    session_id: str = Depends(get_session_id),
 ) -> Any:
-    """
-    Create a new evaluation run.
-    """
+    """Create a new evaluation run."""
     # 1. Determine Model (Header overrides Payload)
     target_model = x_llm_model if x_llm_model else run_in.model
-    
-    # 2. Create DB Record
+
+    # 2. Look up dataset name from DB
+    dataset = db.query(Dataset).filter(Dataset.id == run_in.dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{run_in.dataset_id}' not found")
+
+    # 3. Create DB Record
     run = EvaluationRun(
         dataset_id=run_in.dataset_id,
+        dataset_name=dataset.name,
         model=target_model,
         metrics=run_in.metrics,
+        system_prompt=run_in.system_prompt,
         status="running",
         session_id=session_id,
-        metrics_code=run_in.metrics, # Ensure compatibility if schema expects this or just rely on metrics
-        # If 'metrics' field in DB is valid. Assuming run_in.metrics is what we want.
-        # Note: The user provided code uses run_in.metrics.
-        # Previously we saw run.system_prompt payload.
-        # Let's check schemas.py content in next step to be sure, but user code provided is usually what they want.
-        # I'll stick to user provided code almost exactly, just fixing small obvious typos if any.
-        # User code: metrics=run_in.metrics
     )
-    # Re-reading user code:
-    # run = EvaluationRun(..., metrics=run_in.metrics, ...)
-    # Wait, 'metrics' might be a JSON field or list.
-    
     db.add(run)
     db.commit()
     db.refresh(run)
 
-    # 3. Trigger Background Task via Wrapper
+    # 4. Trigger Background Task
     background_tasks.add_task(
         _run_evaluation_wrapper,
         run_id=run.id,
-        default_system_prompt="You are an expert judge. Evaluate the response based on the query and context.", 
+        default_system_prompt="You are an expert judge. Evaluate the response based on the query and context.",
         api_key=x_llm_key,
-        base_url=x_llm_base_url
+        base_url=x_llm_base_url,
     )
 
     return run
 
+
 @router.get("/{run_id}", response_model=RunSchema)
 def get_run(
     run_id: str,
-    db: Session = Depends(deps.get_db),
-    session_id: str = Depends(deps.get_session_id),
+    db: Session = Depends(get_db),
+    session_id: str = Depends(get_session_id),
 ):
     run = db.query(EvaluationRun).filter(
-        EvaluationRun.id == run_id, 
-        EvaluationRun.session_id == session_id
+        EvaluationRun.id == run_id,
+        EvaluationRun.session_id == session_id,
     ).first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
 
+
 @router.get("/{run_id}/items")
-# response_model excluded to avoid strict validation issues on items if schema varies, 
-# or could use List[EvaluationItemSchema] if available. User code didn't specify response_model for this one.
 def get_run_items(
     run_id: str,
-    db: Session = Depends(deps.get_db),
+    db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 200,
-    session_id: str = Depends(deps.get_session_id),
+    session_id: str = Depends(get_session_id),
 ):
-    # Verify run exists
     run = db.query(EvaluationRun).filter(
         EvaluationRun.id == run_id,
-        EvaluationRun.session_id == session_id
+        EvaluationRun.session_id == session_id,
     ).first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-        
+
     items = (
         db.query(EvaluationItem)
         .filter(EvaluationItem.run_id == run_id)
@@ -121,34 +117,33 @@ def get_run_items(
     )
     return items
 
+
 # ─── Background Wrapper ───────────────────────────────────────────
 
 def _run_evaluation_wrapper(
-    run_id: str, 
-    default_system_prompt: str, 
-    api_key: Optional[str], 
-    base_url: Optional[str]
+    run_id: str,
+    default_system_prompt: str,
+    api_key: Optional[str],
+    base_url: Optional[str],
 ):
-    """
-    Wrapper to handle DB session and call the service layer.
-    """
+    """Wrapper to handle DB session lifecycle and call the service layer."""
     db = SessionLocal()
     try:
-        # 1. Fetch Dynamic System Prompt from AppSettings
+        # Fetch dynamic system prompt from AppSettings
         settings_record = db.query(AppSettings).first()
         effective_prompt = default_system_prompt
         if settings_record and settings_record.system_prompt:
             effective_prompt = settings_record.system_prompt
 
-        # 2. Call the ROBUST service function (which handles loops, errors, and scrolling)
+        # Call the service function
         run_evaluation_background(
-            db=db, 
-            run_id=run_id, 
+            db=db,
+            run_id=run_id,
             system_prompt=effective_prompt,
             api_key=api_key,
-            base_url=base_url
+            base_url=base_url,
         )
     except Exception as e:
-        print(f"Wrapper Logic Error: {e}")
+        print(f"❌ Wrapper Error: {e}")
     finally:
         db.close()

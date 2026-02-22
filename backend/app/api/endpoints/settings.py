@@ -1,5 +1,5 @@
 """
-Settings API endpoints — global app configuration.
+Eval Studio — Settings API endpoints (global app configuration).
 """
 
 from datetime import datetime, timezone
@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
+from app.api.deps import get_db
 from app.models.models import AppSettings
 from app.schemas.schemas import SettingsResponse, SettingsUpdate
 
