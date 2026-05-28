@@ -1,22 +1,22 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout/Layout';
-import Dashboard from './pages/Dashboard';
+import Experiments from './pages/Experiments';
+import NewRun from './pages/NewRun';
+import RunLive from './pages/RunLive';
+import RunReport from './pages/RunReport';
 import Datasets from './pages/Datasets';
-import Results from './pages/Results';
 import Settings from './pages/Settings';
-import Playground from './pages/Playground';
-import Comparison from './pages/Comparison';
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Experiments />} />
+          <Route path="/new" element={<NewRun />} />
+          <Route path="/runs/:id/live" element={<RunLive />} />
+          <Route path="/runs/:id" element={<RunReport />} />
           <Route path="/datasets" element={<Datasets />} />
-          <Route path="/results" element={<Results />} />
-          <Route path="/playground" element={<Playground />} />
-          <Route path="/compare" element={<Comparison />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>

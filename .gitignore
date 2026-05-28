@@ -38,3 +38,6 @@ judge_opus_sessions.db
 # System
 .DS_Store
 Thumbs.db
+
+# Claude Code local config
+.claude/
