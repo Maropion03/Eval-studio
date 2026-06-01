@@ -1,99 +1,151 @@
-
 <div align="center">
 
-# Eval Studio
+# Eval Studio · v2
 
-### A Linear-style, session-based LLM evaluation platform.
+### Prompt regression testbench for AI PMs.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![React](https://img.shields.io/badge/React-18-61DAFB.svg?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688.svg?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC.svg?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Tailwind](https://img.shields.io/badge/Tailwind-4-38B2AC.svg?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-
-![Dashboard Screenshot](docs/dashboard.png)
 
 </div>
 
-## Introduction
+## Why it exists
 
-**The Problem:** Evaluating and comparing LLM outputs side-by-side is tedious. Engineers often resort to spreadsheets or disparate scripts, making it hard to visualize hallucinations, reasoning errors, or regressions.
+AI PMs change a Prompt every week. None of them have a way to know — before
+shipping — whether the change broke another case. The tooling that exists
+(LangSmith, Braintrust, Langfuse) is engineer-shaped, outputs metrics like
+`Faithfulness 0.87` that no executive reviewer can act on, and lives miles
+away from the moment a product team has to choose a model.
 
-**The Solution:** **Eval Studio** is a local-first, privacy-focused evaluation studio designed for speed and clarity. It provides an ephemeral, session-based workspace to test prompts, run datasets, and analyze model performance across providers like **SiliconFlow, OpenAI, DeepSeek, Moonshot**, and more.
-
----
-
-## Key Features
-
-🎨 **Linear-style UI**
-A clean, distraction-free interface built with **Tailwind CSS** and **Phosphor Icons**. Features a meticulously crafted dark mode with subtle ambient lighting and glassmorphism effects.
-
-🔐 **Privacy First (BYOK)**
-Your API keys never leave your browser or local backend. Eval Studio uses a **Bring Your Own Key** architecture, ensuring your data and credentials remain under your control.
-
-⚡ **Session Isolation**
-No login required. Every browser refresh generates a volatile `session_id`, giving you a fresh, isolated workspace. Perfect for quick experiments and demos without persistent clutter. "Refresh to reset."
-
-🤖 **Multi-Provider Support**
-Seamlessly switch between models and providers. Supports any OpenAI-compatible API, including **DeepSeek**, **Moonshot**, **SiliconFlow**, and custom local endpoints (e.g., vLLM, Ollama).
-
-📊 **Visual Analytics**
-Instantly visualize performance metrics like **Faithfulness**, **Relevance**, and **Coherence**. The Results page features comprehensive charts and a diff view to pinpoint hallucinations and reasoning errors.
+**Eval Studio v2** is a regression testbench shaped for the *decision*:
+configure a matrix experiment, watch trials stream live, get a printable
+*Decision Book* that an engineer, a compliance lead, and a CEO can each
+read without translation.
 
 ---
 
-## Tech Stack
+## Two visual modes, one product
 
-### Frontend
--   **Core:** React 18, TypeScript, Vite
--   **Styling:** Tailwind CSS, Phosphor Icons
--   **State/Data:** TanStack Query, React Router
--   **Visualization:** Recharts
+| Mode | Where | Aesthetic |
+|---|---|---|
+| **Terminal Lab** | experimentation pages | NASA mission control × Bloomberg terminal × 70s CRT |
+| **Bureau Report** | the Decision Book artifact | cream paper × Newsreader serif × seal red |
 
-### Backend
--   **Framework:** FastAPI, Pydantic
--   **Database:** SQLite (SQLAlchemy ORM)
--   **LLM Engine:** LiteLLM (Universal API Wrapper)
+The transition between them — same product, different surface — is the
+core narrative: experimentation feels like a lab; decisions look like
+a memo your CEO would print.
 
 ---
 
-## Getting Started
+## Pages
 
-### Prerequisites
--   **Node.js** (v18+)
--   **Python** (v3.10+)
+1. `/`               · **Experiments** — sparkline log of every run
+2. `/new`            · **New Run wizard** — Dataset × Variables × Judges, live cost/ETA
+3. `/runs/:id/live`  · **Live progress** — per-model lanes + scrolling trial log + COMPLETE state
+4. `/runs/:id`       · **Run Report** — three tabs
+    - `Matrix` · 4 × 4 scoreboard with L0-L3 severity dots + Δ vs baseline
+    - `Analysis` · Pareto scatter + Radar + Severity stacked bar
+    - `Decision Book` · 4-section Bureau-form memo with three stakeholder narratives
 
-### 1. Start the Backend
+---
+
+## Methodology
+
+### Judge dimensions (replace `Faithfulness/Relevance/Coherence`)
+- `fact_accuracy`       — numeric/date/entity match, 1:1 required
+- `hallucination_severity` — L0 (no harm) / L1 (data drift) / L2 (compliance event) / L3 (decision-grade error)
+- `citation_recall`     — must-cite-sources coverage (compliance scenarios)
+- `forbidden_hit`       — red-line phrase detection
+- `pareto`              — derived, places model on cost-vs-accuracy frontier
+
+### Starter pack (4 scenarios · 100 seed cases)
+- **Financial QA** — number-dense QA over Chinese A-share quarterly reports
+- **Compliance Audit** — clause citation + violation classification
+- **Research Summary** — long-context faithful summarization
+- **Fraud Detection** — multi-signal anomaly identification, related-party hop-depth
+
+Schema: [`docs/dataset-schema.json`](docs/dataset-schema.json)
+Examples: [`docs/dataset-examples.json`](docs/dataset-examples.json)
+PRD: [`docs/prd-v2.md`](docs/prd-v2.md)
+
+---
+
+## Tech stack
+
+### Frontend (`/`)
+- **React 19 + TypeScript + Vite**
+- **Tailwind 4** (with extensive design tokens in `src/index.css`)
+- Typography: VT323 (CRT) + IBM Plex Mono + JetBrains Mono + Space Mono + Newsreader (serif, Bureau Report only)
+
+### Backend (`/backend`)
+- **FastAPI** + **SQLAlchemy 2.0 (async)** + **asyncpg / aiosqlite**
+- **LiteLLM** for unified provider access (SiliconFlow, DeepSeek, OpenAI, …)
+- **Alembic** for migrations
+- **slowapi** for rate limiting
+- **sse-starlette** for live progress streaming
+
+### Storage
+- Neon Postgres (production) / SQLite (local dev fallback)
+- 6 tables: `sessions ─< experiments ─< runs ─< trials` + `datasets ─< cases`
+
+---
+
+## Quickstart
+
+### 1 · Backend
 
 ```bash
 cd backend
 
-# Create and activate virtual environment
-python -m venv venv
-# Windows
-.\venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
+# uv (recommended) — installs to .venv
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e .
 
-# Install dependencies
-pip install -r requirements.txt
+# config
+cp .env.example .env.local
+# fill in SILICONFLOW_API_KEY (or BYOK from the UI at runtime)
 
-# Run the server
-uvicorn app.main:app --reload
+# create schema (uses SQLite if DATABASE_URL is empty)
+.venv/bin/python -m alembic upgrade head
+
+# (optional) generate + load starter datasets
+.venv/bin/python -m app.fixtures.seed --smoke         # 8 sample cases, no DB
+.venv/bin/python -m app.fixtures.seed                 # full bulk + DB write
+
+# run
+.venv/bin/uvicorn app.main:app --reload --port 8000
 ```
-*The backend API will run at `http://localhost:8000`.*
 
-### 2. Start the Frontend
+API at `http://localhost:8000`. Docs at `/api/docs`.
+
+### 2 · Frontend
 
 ```bash
-# In a new terminal
 npm install
 npm run dev
 ```
-*The frontend will open at `http://localhost:5173`.*
+
+Open `http://localhost:5173`.
+
+---
+
+## Companion project · "AI Evaluation, two ways"
+
+This pairs with [**PRD 智能评审工作台**](#) — same `AI Evaluation` mother
+theme, two product shapes:
+
+- *PRD 评审 workbench* — evaluating **content** (a PRD → improvement notes)
+- *Eval Studio* — evaluating **models** (N candidates → selection memo)
+
+Different products. Different decisions. One thesis: evaluation is the
+hidden bottleneck in shipping AI products, and AI PMs need tools that
+speak in decisions, not metrics.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
