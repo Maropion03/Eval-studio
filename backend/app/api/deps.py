@@ -1,29 +1,26 @@
-"""
-Eval Studio — Dependencies
+"""FastAPI dependencies."""
 
-Shared FastAPI dependencies for database sessions and request context.
-"""
+from collections.abc import AsyncIterator
 
-from typing import Generator, Optional
-from fastapi import Header
-from app.db.session import SessionLocal
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.session import touch_session
+from app.db.session import get_db
+from app.models.models import Session as SessionRow
 
 
-def get_db() -> Generator:
-    """
-    Dependency to provide a database session.
-    Ensures the session is closed after the request is finished.
-    """
-    db = SessionLocal()
-    try:
+async def get_session_id(request: Request) -> str:
+    return request.state.session_id
+
+
+async def get_db_dep() -> AsyncIterator[AsyncSession]:
+    async for db in get_db():
         yield db
-    finally:
-        db.close()
 
 
-def get_session_id(x_session_id: Optional[str] = Header(None)) -> str:
-    """
-    Dependency to extract the Session ID from headers.
-    Returns a default value if not provided (for dev/local mode).
-    """
-    return x_session_id or "default-session"
+async def current_session(
+    request: Request,
+    db: AsyncSession = Depends(get_db_dep),
+) -> SessionRow:
+    return await touch_session(db, request.state.session_id)

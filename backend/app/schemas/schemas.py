@@ -1,128 +1,111 @@
-"""
-Eval Studio — Pydantic Schemas
+"""Pydantic v2 request / response schemas (loose mirrors of SQLA models)."""
 
-All request/response models for the API layer.
-Aligned with ORM models in app/models/models.py.
-"""
+from __future__ import annotations
 
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Literal
 
-# ─── 1. App Settings ──────────────────────────────────────────────
+from pydantic import BaseModel, ConfigDict, Field
 
-class SettingsUpdate(BaseModel):
-    """Partial update payload for settings."""
-    system_prompt: Optional[str] = None
-    low_score_threshold: Optional[float] = None
 
-class SettingsResponse(BaseModel):
-    """Response model for settings."""
-    id: int
-    system_prompt: Optional[str] = None
-    low_score_threshold: float = 0.7
-    updated_at: datetime
+class _Out(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
 
-# ─── 2. Evaluation Items ──────────────────────────────────────────
+# ── Datasets ───────────────────────────────────────────────
 
-class EvaluationItemBase(BaseModel):
-    query: str
-    context: str
-    response: str
-    ground_truth: Optional[str] = ""
-    scores: Optional[Dict[str, float]] = None
-    reasoning: Optional[str] = None
-    failure_type: Optional[str] = None
-    hallucination_spans: Optional[List[Dict[str, Any]]] = None
-    usage: Optional[Dict[str, int]] = None
 
-class EvaluationItemCreate(EvaluationItemBase):
-    run_id: str
-
-class EvaluationItem(EvaluationItemBase):
+class DatasetOut(_Out):
     id: str
-    run_id: str
-    session_id: str
-
-    class Config:
-        from_attributes = True
-
-# Alias for API responses (used by compare endpoint)
-class ItemResponse(EvaluationItem):
-    pass
-
-# ─── 3. Datasets ──────────────────────────────────────────────────
-
-class DatasetCreate(BaseModel):
-    """Create dataset from JSON body — includes inline items."""
+    code: str
     name: str
-    items: List[Dict[str, Any]] = []
+    scenario: str
+    blurb: str | None = None
+    source: str | None = None
+    is_starter: bool
+    cases_count: int
+    avg_tokens: int
+    typical_l2_rate: float
 
-class DatasetResponse(BaseModel):
-    """Response model for datasets."""
+
+# ── Experiments ────────────────────────────────────────────
+
+
+class CreateExperimentIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    kind: Literal["PROMPT", "MODEL", "PARAM", "SELECT"]
+    dataset_id: str
+    variable_axes: dict[str, Any]
+    judge_dims: list[str]
+
+
+class ExperimentOut(_Out):
     id: str
-    name: str
-    item_count: int = 0
-    status: str = "ready"
+    seq: int
+    title: str
+    kind: str
+    scenario: str
+    dataset_id: str
+    variable_axes: dict[str, Any]
+    judge_dims: list[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
 
-# ─── 4. Evaluation Runs ───────────────────────────────────────────
+# ── Runs ───────────────────────────────────────────────────
 
-class EvaluationRunCreate(BaseModel):
-    dataset_id: str
-    model: str
-    metrics: List[str] = ["faithfulness", "relevance", "coherence"]
-    system_prompt: Optional[str] = None
 
-class EvaluationRun(BaseModel):
+class NewRunIn(BaseModel):
+    """When user clicks START RUN — either reuses an experiment or creates ad-hoc."""
+
+    experiment_id: str | None = None
+    inline_experiment: CreateExperimentIn | None = None
+
+
+class TrialEvent(BaseModel):
+    """One SSE event payload — what live page receives per trial."""
+
+    type: Literal["trial", "progress", "complete", "error"] = "trial"
+    idx: int = 0
+    model: str | None = None
+    case_code: str | None = None
+    severity: str | None = None
+    cost: float = 0.0
+    latency_ms: int = 0
+
+    # for type == 'progress' / 'complete'
+    done: int = 0
+    total: int = 0
+    cost_actual: float = 0.0
+
+    # for type == 'error'
+    message: str | None = None
+
+
+class RunOut(_Out):
     id: str
-    dataset_id: str
-    dataset_name: str
-    model: str
-    metrics: List[str]
+    experiment_id: str
     status: str
-    total_items: int = 0
-    completed_items: int = 0
-    average_scores: Optional[Dict[str, float]] = None
-    created_at: datetime
-    completed_at: Optional[datetime] = None
-    session_id: str
-    system_prompt: Optional[str] = None
+    trial_count: int
+    trials_done: int
+    cost_estimated: float
+    cost_actual: float
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
 
-    class Config:
-        from_attributes = True
 
-# Alias for API responses
-class RunResponse(EvaluationRun):
-    pass
+# ── Settings (BYOK) ────────────────────────────────────────
 
-# ─── 5. Playground ────────────────────────────────────────────────
 
-class PlaygroundRequest(BaseModel):
-    system_prompt: str
-    query: str = ""
-    context: str = ""
-    response: str = ""
-    model: str = "gpt-4"
-    metric: str = ""
+class SettingsIn(BaseModel):
+    siliconflow_api_key: str | None = None
+    deepseek_api_key: str | None = None
+    openai_api_key: str | None = None
 
-class PlaygroundResponse(BaseModel):
-    score: float = 0.0
-    reasoning: str = ""
-    model: str = ""
-    latency_ms: float = 0.0
-    usage: Dict[str, int] = {}
 
-# ─── 6. Compare (A/B Diff View) ──────────────────────────────────
-
-class CompareResponse(BaseModel):
-    base_run: RunResponse
-    target_run: RunResponse
-    base_items: List[ItemResponse]
-    target_items: List[ItemResponse]
+class SettingsOut(BaseModel):
+    siliconflow_configured: bool
+    deepseek_configured: bool
+    openai_configured: bool
+    # server has its own dev key as fallback?
+    server_fallback_siliconflow: bool

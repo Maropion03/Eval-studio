@@ -1,30 +1,34 @@
-"""
-Database session and engine configuration.
-Uses SQLite for zero-cost local development.
-"""
+from collections.abc import AsyncIterator
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from typing import Generator
-
-from app.core.config import settings
-
-# SQLite connection string
-DATABASE_URL = f"sqlite:///{settings.db_path}"
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},  # Required for SQLite
-    echo=False,
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from app.core.config import get_settings
+
+settings = get_settings()
+
+# Normalize URL — SQLAlchemy expects +asyncpg / +aiosqlite drivers in scheme.
+def _normalize(url: str) -> str:
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
 
 
-def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency: yields a DB session and ensures cleanup."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+engine = create_async_engine(
+    _normalize(settings.effective_database_url),
+    echo=settings.debug,
+    pool_pre_ping=True,
+    future=True,
+)
+
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def get_db() -> AsyncIterator[AsyncSession]:
+    async with AsyncSessionLocal() as session:
+        yield session

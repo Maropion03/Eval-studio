@@ -1,40 +1,57 @@
-"""
-Eval Studio — Backend Configuration
-Loads settings from .env file
-"""
-
-from pydantic_settings import BaseSettings
+from functools import lru_cache
 from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # LLM API Keys
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
+    model_config = SettingsConfigDict(
+        env_file=(
+            Path(__file__).resolve().parents[2] / ".env.local",
+            Path(__file__).resolve().parents[2] / ".env",
+        ),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-    # Defaults
-    default_model: str = "gpt-4"
-    low_score_threshold: float = 0.7
+    # ── LLM providers ──
+    siliconflow_api_key: str | None = None
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    openai_api_key: str | None = None
 
-    # Server
-    host: str = "0.0.0.0"
-    port: int = 8000
+    # ── Fixed inference roles ──
+    judge_model: str = "deepseek-ai/DeepSeek-V4-Pro"
+    writer_model: str = "deepseek-ai/DeepSeek-V4-Pro"
 
-    # Paths
-    base_dir: Path = Path(__file__).resolve().parent.parent.parent
-    data_dir: Path = base_dir / "data"
-    db_path: Path = data_dir / "judge_opus_sessions.db"
+    # ── DB ──
+    # Empty → fall back to local SQLite for dev
+    database_url: str | None = None
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
+    # ── App ──
+    debug: bool = False
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    session_cookie_name: str = "eval_studio_sid"
+    session_ttl_seconds: int = 86400
+    rate_limit_per_hour: int = Field(default=50, ge=1)
 
-    model_config = {
-        "env_file": str(Path(__file__).resolve().parent.parent.parent / ".env"),
-        "env_file_encoding": "utf-8",
-    }
+    @property
+    def effective_database_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+        # local fallback — SQLite file at backend/data/eval-studio.db
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        data_dir.mkdir(exist_ok=True)
+        return f"sqlite+aiosqlite:///{data_dir / 'eval-studio.db'}"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
-settings = Settings()
-
-# Ensure data directory exists
-settings.data_dir.mkdir(parents=True, exist_ok=True)
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

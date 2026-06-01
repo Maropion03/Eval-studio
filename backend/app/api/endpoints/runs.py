@@ -1,172 +1,158 @@
-"""
-Eval Studio — Evaluation Runs API Endpoints
+"""Run endpoints.
+
+Week 1 scope:
+    - POST /runs            create a queued Run row (no execution yet)
+    - GET  /runs/{id}       fetch run + computed report
+    - GET  /runs/{id}/stream stub SSE (placeholder events) — real execution
+                            engine lands in Week 2.
 """
 
-from fastapi import APIRouter, Depends, BackgroundTasks, Header, HTTPException
-from sqlalchemy.orm import Session
-from typing import Any, Optional, List
+from __future__ import annotations
 
-from app.db.session import SessionLocal
-from app.api.deps import get_db, get_session_id
-from app.models.models import EvaluationRun, EvaluationItem, AppSettings, Dataset
-from app.schemas.schemas import EvaluationRunCreate, EvaluationRun as RunSchema
-from app.services.judge import run_evaluation_background
+import asyncio
+from datetime import datetime, timezone
+
+import orjson
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+
+from app.api.deps import current_session, get_db_dep
+from app.models.models import (
+    Case,
+    Dataset,
+    Experiment,
+    Run,
+    RunStatus,
+)
+from app.models.models import Session as SessionRow
+from app.schemas import NewRunIn, RunOut, TrialEvent
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
-# Default prompt if none is configured
-DEFAULT_SYSTEM_PROMPT = """You are an expert AI judge. Evaluate the response based on the query and context provided.
 
-Score the response on the following metrics and output valid JSON:
-- faithfulness (0-1): How faithful is the response to the context?
-- relevance (0-1): How relevant is the response to the query?
-- coherence (1-5): How coherent and well-structured is the response?
-
-Output format:
-{"faithfulness": <float>, "relevance": <float>, "coherence": <float>, "reasoning": "<string>"}"""
+def _matrix_size(variable_axes: dict, case_count: int) -> int:
+    n = len(variable_axes.get("prompts", []) or [None])
+    m = len(variable_axes.get("models", []) or [])
+    return max(1, n) * max(1, m) * case_count
 
 
-@router.get("", response_model=List[RunSchema])
-def list_runs(
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
-    session_id: str = Depends(get_session_id),
-):
-    runs = (
-        db.query(EvaluationRun)
-        .filter(EvaluationRun.session_id == session_id)
-        .order_by(EvaluationRun.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return runs
+@router.post("", response_model=RunOut)
+async def create_run(
+    body: NewRunIn,
+    db: AsyncSession = Depends(get_db_dep),
+    sess: SessionRow = Depends(current_session),
+) -> Run:
+    """Create a Run row in 'queued' state. Real execution kicked off
+    by a background task (Week 2)."""
+    if not body.experiment_id and not body.inline_experiment:
+        raise HTTPException(400, "either experiment_id or inline_experiment is required")
 
+    if body.experiment_id:
+        exp: Experiment | None = (
+            await db.execute(
+                select(Experiment).where(
+                    Experiment.id == body.experiment_id,
+                    Experiment.session_id == sess.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if exp is None:
+            raise HTTPException(404, "experiment not found")
+    else:
+        # Defer this branch — full inline-experiment creation happens via
+        # /experiments first; clients should not skip it.
+        raise HTTPException(400, "inline_experiment creation not implemented in W1; "
+                                 "POST /experiments first then POST /runs")
 
-@router.post("", response_model=RunSchema, status_code=201)
-def create_run(
-    run_in: EvaluationRunCreate,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    x_llm_key: Optional[str] = Header(None),
-    x_llm_base_url: Optional[str] = Header(None),
-    x_llm_model: Optional[str] = Header(None),
-    session_id: str = Depends(get_session_id),
-) -> Any:
-    """Create a new evaluation run."""
-    # 1. Determine Model (Header overrides Payload)
-    target_model = x_llm_model if x_llm_model else run_in.model
+    ds = (await db.execute(select(Dataset).where(Dataset.id == exp.dataset_id))).scalar_one()
+    trial_count = _matrix_size(exp.variable_axes, ds.cases_count)
 
-    # 2. Look up dataset name from DB
-    dataset = db.query(Dataset).filter(Dataset.id == run_in.dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset '{run_in.dataset_id}' not found")
-
-    # 3. Create DB Record
-    run = EvaluationRun(
-        dataset_id=run_in.dataset_id,
-        dataset_name=dataset.name,
-        model=target_model,
-        metrics=run_in.metrics,
-        system_prompt=run_in.system_prompt,
-        status="running",
-        session_id=session_id,
+    run = Run(
+        experiment_id=exp.id,
+        status=RunStatus.queued.value,
+        trial_count=trial_count,
+        trials_done=0,
     )
     db.add(run)
-    db.commit()
-    db.refresh(run)
-
-    print(f"📝 Created Run {run.id} for dataset '{dataset.name}' with model '{target_model}'")
-
-    # 4. Trigger Background Task
-    background_tasks.add_task(
-        _run_evaluation_wrapper,
-        run_id=run.id,
-        run_system_prompt=run_in.system_prompt,
-        api_key=x_llm_key,
-        base_url=x_llm_base_url,
-    )
-
+    await db.commit()
+    await db.refresh(run)
     return run
 
 
-@router.get("/{run_id}", response_model=RunSchema)
-def get_run(
+@router.get("/{run_id}", response_model=RunOut)
+async def get_run(
     run_id: str,
-    db: Session = Depends(get_db),
-    session_id: str = Depends(get_session_id),
-):
-    run = db.query(EvaluationRun).filter(
-        EvaluationRun.id == run_id,
-        EvaluationRun.session_id == session_id,
-    ).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return run
-
-
-@router.get("/{run_id}/items")
-def get_run_items(
-    run_id: str,
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 200,
-    session_id: str = Depends(get_session_id),
-):
-    run = db.query(EvaluationRun).filter(
-        EvaluationRun.id == run_id,
-        EvaluationRun.session_id == session_id,
-    ).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    items = (
-        db.query(EvaluationItem)
-        .filter(EvaluationItem.run_id == run_id)
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return items
-
-
-# ─── Background Wrapper ───────────────────────────────────────────
-
-def _run_evaluation_wrapper(
-    run_id: str,
-    run_system_prompt: Optional[str],
-    api_key: Optional[str],
-    base_url: Optional[str],
-):
-    """Wrapper to handle DB session lifecycle and resolve system prompt."""
-    db = SessionLocal()
-    try:
-        # Resolve system prompt priority:
-        # 1. Run's own system_prompt (from user's modal submission)
-        # 2. AppSettings.system_prompt (global config)
-        # 3. Built-in default
-        effective_prompt = DEFAULT_SYSTEM_PROMPT
-
-        settings_record = db.query(AppSettings).first()
-        if settings_record and settings_record.system_prompt:
-            effective_prompt = settings_record.system_prompt
-
-        # Run-level prompt takes highest priority
-        if run_system_prompt:
-            effective_prompt = run_system_prompt
-
-        print(f"🔧 Run {run_id}: Using prompt ({len(effective_prompt)} chars)")
-
-        # Call the concurrent evaluation engine
-        run_evaluation_background(
-            db=db,
-            run_id=run_id,
-            system_prompt=effective_prompt,
-            api_key=api_key,
-            base_url=base_url,
+    db: AsyncSession = Depends(get_db_dep),
+    sess: SessionRow = Depends(current_session),
+) -> Run:
+    run = (
+        await db.execute(
+            select(Run)
+            .join(Experiment, Run.experiment_id == Experiment.id)
+            .where(Run.id == run_id, Experiment.session_id == sess.id)
         )
-    except Exception as e:
-        print(f"❌ Wrapper Error for Run {run_id}: {e}")
-    finally:
-        db.close()
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(404, "run not found")
+    return run
+
+
+@router.get("/{run_id}/stream")
+async def stream_run(
+    run_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db_dep),
+    sess: SessionRow = Depends(current_session),
+):
+    """SSE stream. Week 1 = placeholder events. Week 2 wires up the real
+    execution engine + per-trial broadcast."""
+
+    run = (
+        await db.execute(
+            select(Run)
+            .join(Experiment, Run.experiment_id == Experiment.id)
+            .where(Run.id == run_id, Experiment.session_id == sess.id)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(404, "run not found")
+
+    total = run.trial_count
+
+    async def event_generator():
+        # mark start
+        run.status = RunStatus.running.value
+        run.started_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        for i in range(1, total + 1):
+            if await request.is_disconnected():
+                break
+            event = TrialEvent(
+                type="trial",
+                idx=i,
+                model="(stub)",
+                case_code=f"case-{i:03d}",
+                severity="L0",
+                cost=0.02,
+                latency_ms=300,
+                done=i,
+                total=total,
+            )
+            yield {"event": "trial", "data": orjson.dumps(event.model_dump()).decode()}
+            await asyncio.sleep(0.18)
+
+        # complete
+        run.status = RunStatus.done.value
+        run.trials_done = total
+        run.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        yield {
+            "event": "complete",
+            "data": orjson.dumps({"type": "complete", "done": total, "total": total}).decode(),
+        }
+
+    return EventSourceResponse(event_generator())

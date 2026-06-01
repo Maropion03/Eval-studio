@@ -1,75 +1,57 @@
-"""
-Eval Studio Backend — FastAPI Application Entry Point
+"""FastAPI app entry. Mount routes + middleware."""
 
-LLM Evaluation Platform API Server.
-Provides REST endpoints for dataset management, evaluation runs,
-A/B comparison, playground debugging, and settings.
-"""
-
-import traceback
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+from app import __version__
 from app.api.api import api_router
-from app.core.config import settings
-from app.db.session import engine
-from app.models.models import Base
+from app.core.config import get_settings
+from app.core.ratelimit import limiter
+from app.core.session import SessionMiddleware
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Create database tables on startup."""
-    Base.metadata.create_all(bind=engine)
-    print(f"✅ Database ready: {settings.db_path}")
-    print(f"🚀 Eval Studio API running at http://{settings.host}:{settings.port}")
-    print(f"📖 Docs at http://{settings.host}:{settings.port}/docs")
-    yield
-
+settings = get_settings()
 
 app = FastAPI(
-    title="Eval Studio API",
-    description="LLM Evaluation Platform — evaluate, compare, and debug AI model outputs.",
-    version="0.1.0",
-    lifespan=lifespan,
+    title="Eval Studio v2 API",
+    version=__version__,
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
 )
 
-# CORS — allow frontend dev server
+# Order matters: CORS → session → ratelimit (deep to shallow)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=[
-        "*",
-        "x-llm-key",
-        "x-llm-model",
-        "x-llm-base-url",
-        "x-session-id",
-        "Authorization",
-        "Content-Type",
-    ],
+    allow_headers=["*"],
 )
+app.add_middleware(SessionMiddleware)
+app.add_middleware(SlowAPIMiddleware)
+
+app.state.limiter = limiter
 
 
-@app.exception_handler(Exception)
-async def debug_exception_handler(request: Request, exc: Exception):
-    """Global exception handler for debugging — prints full traceback."""
-    error_msg = "".join(traceback.format_exception(None, exc, exc.__traceback__))
-    print(f"❌ UNHANDLED EXCEPTION for {request.url.path}:\n{error_msg}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal Server Error", "trace": str(exc)},
-    )
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(_, exc):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=429, content={"detail": f"rate limit exceeded: {exc.detail}"})
 
 
-# Mount all API routes
-app.include_router(api_router)
+app.include_router(api_router, prefix="/api")
+
+
+@app.get("/")
+async def root():
+    return {
+        "service": "eval-studio-api",
+        "version": __version__,
+        "docs": "/api/docs",
+    }
 
 
 @app.get("/health")
-def health_check():
-    """Health check endpoint."""
-    return {"status": "ok", "service": "eval-studio-api", "version": "0.1.0"}
+async def health():
+    return {"ok": True}
