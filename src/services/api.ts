@@ -116,6 +116,66 @@ export interface TrialEvent {
     message?: string | null;
 }
 
+export interface CandidateSummary {
+    model: string;
+    display_name: string;
+    trials: number;
+    pass_rate: number;
+    l1: number;
+    l2: number;
+    l3: number;
+    avg_latency_ms: number;
+    total_cost: number;
+    cost_per_trial: number;
+    pareto: boolean;
+}
+
+export interface RunFailure {
+    trial_idx: number;
+    case_id: string;
+    model: string;
+    severity: Severity;
+    explanation: string;
+    output_excerpt: string;
+}
+
+export interface DecisionBook {
+    recommendation: { model: string; headline: string; pull_quote: string };
+    tradeoff_paragraph?: string;
+    annual_spend_table?: { assumptions: string; rows: { model: string; yuan_per_year: number }[] };
+    narratives: {
+        boss: { title: string; body: string };
+        compliance: { title: string; body: string };
+        engineering: { title: string; body: string };
+    };
+    risks: { severity: string; risk: string; mitigation: string }[];
+    scoreboard?: CandidateSummary[];
+    failures?: RunFailure[];
+    _source?: string;
+}
+
+export interface RunReportData {
+    run: {
+        id: string;
+        status: RunStatus;
+        trial_count: number;
+        trials_done: number;
+        cost_actual: number;
+        started_at: string | null;
+        finished_at: string | null;
+    };
+    experiment: {
+        id: string;
+        title: string;
+        kind: ExperimentKind;
+        scenario: string;
+    };
+    candidates: CandidateSummary[];
+    severity_breakdown: Record<string, { l0: number; l1: number; l2: number; l3: number }>;
+    failures: RunFailure[];
+    decision_book: DecisionBook | null;
+}
+
 export interface SettingsOut {
     siliconflow_configured: boolean;
     deepseek_configured: boolean;
@@ -149,6 +209,7 @@ export const api = {
 
     runs: {
         get:    (id: string) => http<Run>(`/api/runs/${id}`),
+        report: (id: string) => http<RunReportData>(`/api/runs/${id}/report`),
         create: (experimentId: string) =>
             http<Run>('/api/runs', {
                 method: 'POST',

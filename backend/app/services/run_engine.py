@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
 from app.models.models import Case, Dataset, Experiment, Run, RunStatus, Trial
+from app.services.decision_writer import compose_decision_book
 from app.services.judge_engine import judge_trial
 from app.services.llm_client import chat
 
@@ -253,8 +254,9 @@ async def _execute_run(run_id: str, session_byok: dict[str, Any] | None) -> None
                     log.exception("trial %d crashed: %s", i, e)
                     return None
 
-        # Run-to-completion with progress events
+        # Run-to-completion with progress events + periodic commit
         tasks = [_slot(c, p, m, i) for (c, p, m, i) in work]
+        COMMIT_EVERY = 5
         for fut in asyncio.as_completed(tasks):
             trial = await fut
             done += 1
@@ -273,13 +275,45 @@ async def _execute_run(run_id: str, session_byok: dict[str, Any] | None) -> None
                     "cost_actual": round(cost_total, 4),
                 })
 
-        # Mark complete
+            # Periodic commit so GET /runs/{id} reflects progress mid-flight,
+            # and crashes don't lose visibility into how far we got.
+            if done % COMMIT_EVERY == 0 or done == total:
+                try:
+                    async with AsyncSessionLocal() as progress_db:
+                        r = (await progress_db.execute(select(Run).where(Run.id == run.id))).scalar_one()
+                        r.trials_done = done
+                        r.cost_actual = round(cost_total, 4)
+                        await progress_db.commit()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("progress commit failed at %d/%d: %s", done, total, e)
+
+        # Decision Book — fetch all trials, compose via Writer LLM, persist
+        decision_book: dict[str, Any] | None = None
+        try:
+            async with AsyncSessionLocal() as book_db:
+                all_trials = list((
+                    await book_db.execute(
+                        select(Trial).where(Trial.run_id == run.id).order_by(Trial.idx)
+                    )
+                ).scalars().all())
+                decision_book = await compose_decision_book(
+                    experiment_title=exp.title,
+                    scenario=exp.scenario,
+                    trials=all_trials,
+                    byok_keys=session_byok,
+                )
+        except Exception as e:  # noqa: BLE001
+            log.warning("decision book compose failed: %s", e)
+
+        # Mark complete + persist decision book
         async with AsyncSessionLocal() as final_db:
             r = (await final_db.execute(select(Run).where(Run.id == run.id))).scalar_one()
             r.status = RunStatus.done.value
             r.trials_done = done
             r.cost_actual = round(cost_total, 4)
             r.finished_at = datetime.now(timezone.utc)
+            if decision_book is not None:
+                r.decision_book = decision_book
             await final_db.commit()
 
         _emit(run_id, {

@@ -84,6 +84,83 @@ async def get_run(
     return run
 
 
+@router.get("/{run_id}/report")
+async def get_run_report(
+    run_id: str,
+    db: AsyncSession = Depends(get_db_dep),
+    sess: SessionRow = Depends(current_session),
+):
+    """Aggregated payload for the RunReport page — matrix + analysis + decision book."""
+    from app.models.models import Trial
+    from app.services.decision_writer import aggregate_trials, compute_pareto, top_failures
+
+    run = (
+        await db.execute(
+            select(Run)
+            .join(Experiment, Run.experiment_id == Experiment.id)
+            .where(Run.id == run_id, Experiment.session_id == sess.id)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(404, "run not found")
+
+    exp = (await db.execute(
+        select(Experiment).where(Experiment.id == run.experiment_id)
+    )).scalar_one()
+
+    trials = list((await db.execute(
+        select(Trial).where(Trial.run_id == run.id).order_by(Trial.idx)
+    )).scalars().all())
+
+    candidates = aggregate_trials(trials)
+    compute_pareto(candidates)
+    failures = top_failures(trials, n=8)
+
+    # Severity totals per model
+    sev_breakdown = {
+        c.model: {
+            "l0": c.trials - c.l1 - c.l2 - c.l3,
+            "l1": c.l1, "l2": c.l2, "l3": c.l3,
+        }
+        for c in candidates
+    }
+
+    return {
+        "run": {
+            "id": run.id,
+            "status": run.status,
+            "trial_count": run.trial_count,
+            "trials_done": run.trials_done,
+            "cost_actual": run.cost_actual,
+            "started_at": run.started_at,
+            "finished_at": run.finished_at,
+        },
+        "experiment": {
+            "id": exp.id,
+            "title": exp.title,
+            "kind": exp.kind,
+            "scenario": exp.scenario,
+        },
+        "candidates": [
+            {
+                "model": c.model,
+                "display_name": c.display_name,
+                "trials": c.trials,
+                "pass_rate": c.pass_rate,
+                "l1": c.l1, "l2": c.l2, "l3": c.l3,
+                "avg_latency_ms": c.avg_latency_ms,
+                "total_cost": c.total_cost,
+                "cost_per_trial": c.cost_per_trial,
+                "pareto": c.pareto,
+            }
+            for c in candidates
+        ],
+        "severity_breakdown": sev_breakdown,
+        "failures": failures,
+        "decision_book": run.decision_book,
+    }
+
+
 @router.get("/{run_id}/stream")
 async def stream_run(
     run_id: str,

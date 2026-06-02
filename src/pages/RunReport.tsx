@@ -1,5 +1,10 @@
 import { Link, useParams } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api, type RunReportData } from '../services/api';
+
+function isRealRunId(id: string | undefined): boolean {
+    return !!id && id.startsWith('run_');
+}
 
 // ════════════════════════════════════════════════════════════════════
 //  Mock data — Run #040 · Model Selection on Fraud Detection scenario
@@ -878,11 +883,25 @@ function DecisionBookTab() {
 export default function RunReport() {
     const { id } = useParams();
     const [tab, setTab] = useState<Tab>('matrix');
+    const [realData, setRealData] = useState<RunReportData | null>(null);
+    const real = isRealRunId(id);
+
+    useEffect(() => {
+        if (!real || !id) return;
+        let cancelled = false;
+        api.runs.report(id)
+            .then((d) => { if (!cancelled) setRealData(d); })
+            .catch(() => { /* keep mocks on failure */ });
+        return () => { cancelled = true; };
+    }, [id, real]);
 
     return (
         <div className="max-w-[1320px] mx-auto reveal-in">
             <PageHeader id={id ?? 'run-040'} />
             <SummaryStrip />
+
+            {real && <LiveDataPanel data={realData} runId={id ?? ''} />}
+
             <div className="mt-8">
                 <TabBar tab={tab} setTab={setTab} />
                 {tab === 'matrix'   && <MatrixTab />}
@@ -890,5 +909,137 @@ export default function RunReport() {
                 {tab === 'decision' && <DecisionBookTab />}
             </div>
         </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Live data panel (shown only when run id is a real backend id)
+//  Demonstrates the real evaluation results above the mock-driven tabs
+//  that showcase the full designed product surface.
+// ════════════════════════════════════════════════════════════════════
+
+function LiveDataPanel({ data, runId }: { data: RunReportData | null; runId: string }) {
+    if (!data) {
+        return (
+            <div className="mt-6 border border-[var(--color-amber-trace)] bg-[var(--color-amber-trace)]
+                            px-4 py-3 font-mono text-[10.5px] tracking-[0.14em] text-[var(--color-amber)]">
+                ◌ LOADING&nbsp; live data for {runId}…
+            </div>
+        );
+    }
+    const status = data.run.status;
+    const done = data.run.trials_done;
+    const total = data.run.trial_count;
+    const dbook = data.decision_book;
+    const rec = data.candidates.find(c => c.pareto) ?? data.candidates[0];
+
+    return (
+        <section className="mt-8">
+            <div className="tl-rule mb-3">
+                <span>LIVE · EVAL RESULTS · {data.experiment.scenario.toUpperCase()}</span>
+            </div>
+
+            {/* status strip */}
+            <div className="grid grid-cols-4 border-y border-[var(--color-border)] mb-5">
+                {[
+                    { k: 'STATUS', v: status.toUpperCase(), tone: status === 'done' ? 'mint' : 'amber' },
+                    { k: 'PROGRESS', v: `${done} / ${total}` },
+                    { k: 'COST', v: `¥${data.run.cost_actual.toFixed(3)}`, tone: 'amber' },
+                    { k: 'WINNER', v: rec ? rec.display_name : '—', tone: 'amber-bright' },
+                ].map((c, i) => (
+                    <div key={c.k} className={`px-4 py-3 ${i > 0 ? 'border-l border-[var(--color-border)]' : ''}`}>
+                        <div className="text-[9.5px] tracking-[0.22em] text-[var(--color-text-dim)]">{c.k}</div>
+                        <div className={`mt-1 font-data text-[14px] ${
+                            c.tone === 'mint' ? 'text-[var(--color-mint)] glow-mint'
+                            : c.tone === 'amber' ? 'text-[var(--color-amber)] glow-amber-soft'
+                            : c.tone === 'amber-bright' ? 'text-[var(--color-amber-bright)]'
+                            : 'text-[var(--color-text-bright)]'
+                        }`}>{c.v}</div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Real candidates table */}
+            {data.candidates.length > 0 && (
+                <div className="font-mono text-[11px]">
+                    <div className="grid grid-cols-[minmax(0,1fr)_72px_72px_72px_72px_90px_90px] gap-3
+                                    text-[9.5px] tracking-[0.22em] text-[var(--color-text-dim)]
+                                    border-b border-[var(--color-border)] px-3 py-2">
+                        <span>MODEL</span>
+                        <span className="text-right">TRIALS</span>
+                        <span className="text-right">PASS</span>
+                        <span className="text-right text-[var(--color-L1)]">L1</span>
+                        <span className="text-right text-[var(--color-L2)]">L2+</span>
+                        <span className="text-right">LAT</span>
+                        <span className="text-right">¥/TRIAL</span>
+                    </div>
+                    {data.candidates.map((c) => (
+                        <div key={c.model} className={`grid grid-cols-[minmax(0,1fr)_72px_72px_72px_72px_90px_90px] gap-3
+                                                       items-baseline px-3 py-2 border-b border-[var(--color-border)]
+                                                       ${c.pareto ? 'bg-[var(--color-amber-trace)]' : ''}`}>
+                            <span className={c.pareto ? 'text-[var(--color-amber)] glow-amber-soft' : 'text-[var(--color-text-bright)]'}>
+                                {c.pareto && '★ '}{c.display_name}
+                            </span>
+                            <span className="text-right font-data text-[var(--color-text-muted)]">{c.trials}</span>
+                            <span className={`text-right font-data ${
+                                c.pass_rate >= 0.9 ? 'text-[var(--color-mint)]'
+                                : c.pass_rate >= 0.7 ? 'text-[var(--color-amber)]'
+                                : 'text-[var(--color-L2)]'
+                            }`}>{(c.pass_rate * 100).toFixed(1)}%</span>
+                            <span className="text-right font-data text-[var(--color-L1)]">{c.l1}</span>
+                            <span className="text-right font-data text-[var(--color-L2)]">{c.l2 + c.l3}</span>
+                            <span className="text-right font-data text-[var(--color-text-muted)]">{c.avg_latency_ms.toFixed(0)}ms</span>
+                            <span className="text-right font-data text-[var(--color-amber)]">¥{c.cost_per_trial.toFixed(4)}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Decision book preview (if writer LLM finished) */}
+            {dbook && (
+                <div className="mt-5 border border-[var(--color-amber)] bg-[var(--color-amber-trace)] px-5 py-4">
+                    <div className="font-mono text-[10px] tracking-[0.22em] text-[var(--color-amber)]">
+                        📜 DECISION&nbsp;BOOK&nbsp;·&nbsp;ADOPT&nbsp;<strong>{dbook.recommendation.model}</strong>
+                    </div>
+                    <div className="mt-2 text-[14px] text-[var(--color-text-bright)] tracking-[0.01em]">
+                        {dbook.recommendation.headline}
+                    </div>
+                    {dbook.recommendation.pull_quote && (
+                        <div className="mt-2 text-[12px] italic text-[var(--color-text-muted)] border-l-2 border-[var(--color-amber)] pl-3">
+                            "{dbook.recommendation.pull_quote}"
+                        </div>
+                    )}
+                    {dbook.tradeoff_paragraph && (
+                        <p className="mt-3 text-[12.5px] leading-[1.6] text-[var(--color-text-muted)]">
+                            {dbook.tradeoff_paragraph}
+                        </p>
+                    )}
+                </div>
+            )}
+
+            {data.failures.length > 0 && (
+                <div className="mt-5">
+                    <div className="font-mono text-[9.5px] tracking-[0.22em] text-[var(--color-text-dim)] mb-2">
+                        TOP FAILURES · {data.failures.length}
+                    </div>
+                    <div className="space-y-1.5">
+                        {data.failures.slice(0, 4).map((f) => (
+                            <div key={f.trial_idx} className="px-3 py-2 border-l-2 font-mono text-[11px]"
+                                 style={{ borderColor: f.severity === 'L3' ? 'var(--color-L3)' : 'var(--color-L2)' }}>
+                                <span className="font-data text-[var(--color-text-fade)]">trial#{f.trial_idx.toString().padStart(3, '0')}</span>
+                                <span className="mx-2 font-data" style={{ color: f.severity === 'L3' ? 'var(--color-L3)' : 'var(--color-L2)' }}>
+                                    {f.severity}
+                                </span>
+                                <span className="text-[var(--color-text-muted)]">{f.explanation}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div className="mt-6 text-[10px] tracking-[0.18em] text-[var(--color-text-fade)] font-mono">
+                ─── below: designed surface preview with mock data ───
+            </div>
+        </section>
     );
 }
