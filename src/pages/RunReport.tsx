@@ -466,7 +466,7 @@ function ParetoChart() {
             />
 
             {/* Points */}
-            {points.map((p, i) => (
+            {points.map((p) => (
                 <g key={p.name}>
                     {p.rec && (
                         <circle cx={sx(p.cost)} cy={sy(p.acc)} r="12"
