@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { api, type Dataset as RealDataset, APIError } from '../services/api';
 
 // ════════════════════════════════════════════════════════════════════
 //  Mock catalogues
@@ -65,6 +66,7 @@ const PROMPTS: PromptVersion[] = [
 
 interface ModelOption {
     id: string;
+    apiId: string;          // model id as understood by the backend / SiliconFlow / DeepSeek
     name: string;
     vendor: string;
     tier: 'FLAGSHIP' | 'BALANCED' | 'BUDGET';
@@ -72,15 +74,20 @@ interface ModelOption {
     contextK: number;
 }
 
+/**
+ * Defaults below all route through SiliconFlow — keeps the demo flowing with
+ * just one BYOK key. Drop in OpenAI / Anthropic keys via Settings to enable
+ * gpt-4o / claude as candidates.
+ */
 const MODELS_AVAIL: ModelOption[] = [
-    { id: 'gpt-4o',       name: 'GPT-4o',           vendor: 'OpenAI',     tier: 'FLAGSHIP', costPer1k: 5.00, contextK: 128 },
-    { id: 'gpt-4o-mini',  name: 'GPT-4o · mini',    vendor: 'OpenAI',     tier: 'BUDGET',   costPer1k: 0.45, contextK: 128 },
-    { id: 'claude-46',    name: 'Claude 4.6',       vendor: 'Anthropic',  tier: 'FLAGSHIP', costPer1k: 3.00, contextK: 200 },
-    { id: 'claude-46-h',  name: 'Claude 4.6 · Haiku', vendor: 'Anthropic',tier: 'BALANCED', costPer1k: 0.80, contextK: 200 },
-    { id: 'deepseek-v3',  name: 'DeepSeek-V3',      vendor: 'DeepSeek',   tier: 'BALANCED', costPer1k: 1.00, contextK: 128 },
-    { id: 'deepseek-r1',  name: 'DeepSeek-R1',      vendor: 'DeepSeek',   tier: 'FLAGSHIP', costPer1k: 2.20, contextK: 128 },
-    { id: 'qwen-max',     name: 'Qwen-Max',         vendor: 'Alibaba',    tier: 'BALANCED', costPer1k: 0.60, contextK: 32  },
-    { id: 'moonshot-v1',  name: 'Moonshot v1 128k', vendor: 'Moonshot',   tier: 'BALANCED', costPer1k: 0.85, contextK: 128 },
+    { id: 'ds-v4-pro',    apiId: 'deepseek-ai/DeepSeek-V4-Pro',  name: 'DeepSeek-V4 · Pro',   vendor: 'DeepSeek',   tier: 'FLAGSHIP', costPer1k: 1.20, contextK: 128 },
+    { id: 'ds-v4-flash',  apiId: 'deepseek-ai/DeepSeek-V4-Flash',name: 'DeepSeek-V4 · Flash', vendor: 'DeepSeek',   tier: 'BUDGET',   costPer1k: 0.30, contextK: 128 },
+    { id: 'ds-v32',       apiId: 'deepseek-ai/DeepSeek-V3.2',    name: 'DeepSeek-V3.2',       vendor: 'DeepSeek',   tier: 'BALANCED', costPer1k: 1.00, contextK: 128 },
+    { id: 'ds-v3',        apiId: 'deepseek-ai/DeepSeek-V3',      name: 'DeepSeek-V3',         vendor: 'DeepSeek',   tier: 'BALANCED', costPer1k: 1.00, contextK: 128 },
+    { id: 'ds-r1',        apiId: 'deepseek-ai/DeepSeek-R1',      name: 'DeepSeek-R1',         vendor: 'DeepSeek',   tier: 'FLAGSHIP', costPer1k: 2.20, contextK: 128 },
+    { id: 'qwen-72b',     apiId: 'Qwen/Qwen2.5-72B-Instruct',    name: 'Qwen-2.5 · 72B',      vendor: 'Alibaba',    tier: 'BALANCED', costPer1k: 0.85, contextK: 32  },
+    { id: 'gpt-4o',       apiId: 'openai/gpt-4o',                name: 'GPT-4o',              vendor: 'OpenAI',     tier: 'FLAGSHIP', costPer1k: 5.00, contextK: 128 },
+    { id: 'claude-46',    apiId: 'anthropic/claude-sonnet-4-5',  name: 'Claude 4.6 · Sonnet', vendor: 'Anthropic',  tier: 'FLAGSHIP', costPer1k: 3.00, contextK: 200 },
 ];
 
 interface JudgeDim {
@@ -114,16 +121,36 @@ const JUDGES: JudgeDim[] = [
 
 type StepId = 1 | 2 | 3;
 
+function kindFromSelection(modelCount: number, promptCount: number): 'PROMPT' | 'MODEL' | 'SELECT' {
+    if (modelCount >= 3) return 'SELECT';
+    if (promptCount > 1) return 'PROMPT';
+    return 'MODEL';
+}
+
 export default function NewRun() {
     const navigate = useNavigate();
     const [step, setStep] = useState<StepId>(1);
     const [datasetId, setDatasetId] = useState<string>('fraud_detection');
     const [promptIds, setPromptIds] = useState<Set<string>>(new Set(['v3', 'v4']));
-    const [modelIds, setModelIds] = useState<Set<string>>(new Set(['gpt-4o', 'claude-46', 'deepseek-v3', 'qwen-max']));
+    const [modelIds, setModelIds] = useState<Set<string>>(new Set(['ds-v3', 'ds-v32', 'ds-r1', 'qwen-72b']));
     const [temperature, setTemperature] = useState(0.2);
     const [judges, setJudges] = useState<Set<string>>(
         new Set(JUDGES.filter(j => j.defaultOn).map(j => j.id))
     );
+
+    // Real datasets from backend (used for the actual POST). UI keeps the
+    // designed mock cards so the demo still looks rich when API is down.
+    const [realDatasets, setRealDatasets] = useState<RealDataset[] | null>(null);
+    const [submitting, setSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        api.datasets.list()
+            .then((ds) => { if (!cancelled) setRealDatasets(ds); })
+            .catch(() => { /* offline — fall back to mock UI */ });
+        return () => { cancelled = true; };
+    }, []);
 
     const dataset = DATASETS.find(d => d.id === datasetId)!;
 
@@ -170,6 +197,47 @@ export default function NewRun() {
     };
     const allReady = stepReady[1] && stepReady[2] && stepReady[3];
 
+    // ── Real submit: POST experiment + run, then navigate to live ──
+    async function onStart() {
+        setSubmitError(null);
+        setSubmitting(true);
+        try {
+            if (!realDatasets || realDatasets.length === 0) {
+                // Backend offline — keep the demo flowing with a navigable mock id
+                navigate('/runs/run-042/live');
+                return;
+            }
+            const real = realDatasets.find(d => d.scenario === dataset.id);
+            if (!real) {
+                throw new Error(`scenario ${dataset.id} not found on backend`);
+            }
+
+            // Resolve model.apiId for the backend call (not the display id)
+            const modelApiIds = Array.from(modelIds)
+                .map(id => MODELS_AVAIL.find(m => m.id === id)?.apiId)
+                .filter((x): x is string => !!x);
+
+            const exp = await api.experiments.create({
+                title: `${kindFromSelection(modelIds.size, promptIds.size)} · ${real.name}`,
+                kind: kindFromSelection(modelIds.size, promptIds.size),
+                dataset_id: real.id,
+                variable_axes: {
+                    prompts: Array.from(promptIds),
+                    models: modelApiIds,
+                    params: { temperature },
+                },
+                judge_dims: Array.from(judges),
+            });
+
+            const run = await api.runs.create(exp.id);
+            navigate(`/runs/${run.id}/live`);
+        } catch (e) {
+            const msg = e instanceof APIError ? `${e.message} ${JSON.stringify(e.detail || '')}` : String(e);
+            setSubmitError(msg);
+            setSubmitting(false);
+        }
+    }
+
     return (
         <div className="max-w-[1320px] mx-auto pb-32 reveal-in">
             {/* ── Page Header ────────────────────────────── */}
@@ -214,13 +282,22 @@ export default function NewRun() {
                 )}
             </div>
 
+            {/* Submit error banner */}
+            {submitError && (
+                <div className="mt-6 border border-[var(--color-L2)] bg-[var(--color-L2-trace)] px-4 py-3
+                                font-mono text-[11px] tracking-[0.06em] text-[var(--color-L2)]">
+                    <span className="font-data">✗ START FAILED</span>
+                    <span className="ml-3 text-[var(--color-text-bright)]">{submitError}</span>
+                </div>
+            )}
+
             {/* ── Sticky preview footer ───────────────────── */}
             <StickyFooter
                 step={step}
                 setStep={setStep}
                 calc={calc}
-                allReady={allReady}
-                onStart={() => navigate('/runs/run-042/live')}
+                allReady={allReady && !submitting}
+                onStart={onStart}
             />
         </div>
     );

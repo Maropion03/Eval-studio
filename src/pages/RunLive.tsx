@@ -1,5 +1,13 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../services/api';
+
+// A real backend run id looks like `run_xxxxxxxxxx`. Any other id (e.g.
+// `run-042`) is treated as a mock id and drives the local simulator so the
+// demo still flows without a server.
+function isRealRunId(id: string | undefined): boolean {
+    return !!id && id.startsWith('run_');
+}
 
 // ════════════════════════════════════════════════════════════════════
 //  Config — what this mock "run" looks like
@@ -49,7 +57,7 @@ function makeRng(seed: number) {
 //  Hook — simulated live stream
 // ════════════════════════════════════════════════════════════════════
 
-function useRunStream() {
+function useRunStream(runId: string | undefined) {
     const [done, setDone]   = useState(0);
     const [log, setLog]     = useState<TrialEvent[]>([]);
     const [elapsed, setEla] = useState(0);
@@ -74,7 +82,64 @@ function useRunStream() {
     const rngRef      = useRef(makeRng(7));
     const startRef    = useRef<number>(Date.now());
 
+    const isReal = isRealRunId(runId);
+
     useEffect(() => {
+        // ─── REAL backend SSE path ─────────────────────────────────
+        if (isReal && runId) {
+            let total = TOTAL_TRIALS;
+            const apply = (ev: { idx: number; model: string | null; case_code: string | null;
+                                 severity: string | null; cost: number; latency_ms: number;
+                                 done: number; total: number; type: string }) => {
+                if (ev.total > 0) total = ev.total;
+                const verdict = (ev.severity === 'L0' || !ev.severity) ? 'PASS' : (ev.severity as 'L1' | 'L2' | 'L3');
+                const laneId = ev.model || 'unknown';
+                const newEv: TrialEvent = {
+                    ts: Date.now(),
+                    idx: ev.idx,
+                    model: laneId,
+                    caseId: ev.case_code || '',
+                    verdict,
+                    cost: ev.cost,
+                    latencyMs: ev.latency_ms,
+                };
+                logRef.current = [newEv, ...logRef.current].slice(0, LOG_KEEP);
+                doneRef.current = ev.done || (doneRef.current + 1);
+                costRef.current += ev.cost;
+                laneRef.current[laneId] = (laneRef.current[laneId] || 0) + 1;
+                if (verdict !== 'PASS') {
+                    if (!sevRef.current[laneId]) sevRef.current[laneId] = { l1: 0, l2: 0, l3: 0 };
+                    sevRef.current[laneId][verdict.toLowerCase() as 'l1' | 'l2' | 'l3'] += 1;
+                }
+
+                setDone(doneRef.current);
+                setCost(costRef.current);
+                setLog(logRef.current);
+                setPerModel({ ...laneRef.current });
+                setPerModelSev({
+                    ...Object.fromEntries(
+                        Object.entries(sevRef.current).map(([k, v]) => [k, { ...v }])
+                    )
+                });
+            };
+
+            const cleanup = api.runs.stream(runId, {
+                onTrial: apply,
+                onComplete: (ev) => {
+                    if (ev.total > 0) total = ev.total;
+                    doneRef.current = total;
+                    setDone(total);
+                },
+                onError: (e) => {
+                    console.error('SSE error', e);
+                },
+            });
+
+            const tid = setInterval(() => setEla(Math.floor((Date.now() - startRef.current) / 1000)), 250);
+            return () => { cleanup(); clearInterval(tid); };
+        }
+
+        // ─── MOCK simulator path (kept for offline demos) ──────────
         const id = setInterval(() => {
             if (doneRef.current >= TOTAL_TRIALS) {
                 clearInterval(id);
@@ -123,7 +188,6 @@ function useRunStream() {
             costRef.current += costDelta;
             logRef.current = [...newEvents.reverse(), ...logRef.current].slice(0, LOG_KEEP);
 
-            // single, pure setter call per piece of state — no nested updaters
             setDone(doneRef.current);
             setCost(costRef.current);
             setLog(logRef.current);
@@ -138,9 +202,9 @@ function useRunStream() {
         const tid = setInterval(() => setEla(Math.floor((Date.now() - startRef.current) / 1000)), 250);
 
         return () => { clearInterval(id); clearInterval(tid); };
-    }, []);
+    }, [runId, isReal]);
 
-    return { done, log, elapsed, costNow, perModel, perModelSev };
+    return { done, log, elapsed, costNow, perModel, perModelSev, isReal };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -150,7 +214,7 @@ function useRunStream() {
 export default function RunLive() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { done, log, elapsed, costNow, perModel, perModelSev } = useRunStream();
+    const { done, log, elapsed, costNow, perModel, perModelSev } = useRunStream(id);
 
     const pct      = (done / TOTAL_TRIALS) * 100;
     const complete = done >= TOTAL_TRIALS;

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api, type Experiment as RealExperiment } from '../services/api';
 
 // ─── Mock data ──────────────────────────────────────────────────────────
 
@@ -325,8 +326,35 @@ function ExperimentRow({ exp }: { exp: Experiment }) {
 export default function Experiments() {
     const [view, setView] = useState<'log' | 'board'>('log');
     const [filter, setFilter] = useState<'ALL' | Status>('ALL');
+    const [realExps, setRealExps] = useState<RealExperiment[] | null>(null);
 
-    const filtered = filter === 'ALL' ? experiments : experiments.filter(e => e.status === filter);
+    useEffect(() => {
+        let cancelled = false;
+        api.experiments.list()
+            .then((rows) => { if (!cancelled) setRealExps(rows); })
+            .catch(() => { /* offline — keep mock */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    // Merge real (top) + mock (below for demo). Real experiments have no
+    // trial data yet (W2 backfills) — render them with placeholder sparks.
+    const mergedExperiments: Experiment[] = (realExps && realExps.length > 0)
+        ? [
+            ...realExps.map(e => ({
+                id: e.id,
+                seq: e.seq,
+                title: e.title,
+                scenario: e.scenario,
+                kind: e.kind,
+                status: 'queued' as Status,
+                spark: [],
+                timestamp: new Date(e.created_at).toLocaleString(),
+            } satisfies Experiment)),
+            ...experiments,
+          ]
+        : experiments;
+
+    const filtered = filter === 'ALL' ? mergedExperiments : mergedExperiments.filter(e => e.status === filter);
 
     return (
         <div className="max-w-[1320px] mx-auto reveal-in">
