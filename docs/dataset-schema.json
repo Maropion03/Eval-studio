@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eval-studio.local/schemas/dataset-case-v2.json",
+  "title": "Eval Studio v2 · Dataset Case Schema",
+  "description": "单条评测用例 (case) 的 schema。一个 dataset 是 case 的数组。",
+  "type": "object",
+
+  "required": ["case_id", "scenario", "difficulty", "risk_tier", "input", "reference"],
+
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "description": "全局唯一 ID,推荐格式: <scenario_prefix>-<3位序号>,如 fin-qa-001",
+      "pattern": "^[a-z]+(-[a-z]+)*-\\d{3,}$"
+    },
+
+    "scenario": {
+      "type": "string",
+      "description": "场景标签,决定启用哪些判题维度",
+      "enum": [
+        "financial_qa",
+        "compliance_audit",
+        "research_summary",
+        "fraud_detection",
+        "custom"
+      ]
+    },
+
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"],
+      "description": "难度分级,用于报告里的分层统计"
+    },
+
+    "risk_tier": {
+      "type": "string",
+      "enum": ["L0", "L1", "L2", "L3"],
+      "description": "若该 case 判错的业务严重度。L0 无伤 / L1 数据偏差 / L2 合规事故 / L3 决策误导"
+    },
+
+    "input": {
+      "type": "object",
+      "required": ["question"],
+      "description": "模型输入。context 可选 (RAG 场景用),question 必填",
+      "properties": {
+        "context": {
+          "type": "string",
+          "description": "上下文文档 / RAG 检索块。可包含 3-5k 字长文档"
+        },
+        "question": {
+          "type": "string",
+          "description": "用户问题 / 任务指令",
+          "minLength": 1
+        },
+        "extra": {
+          "type": "object",
+          "description": "场景特定的额外输入,如合规场景可附条款全文",
+          "additionalProperties": true
+        }
+      }
+    },
+
+    "reference": {
+      "type": "object",
+      "description": "判题资产。不同 scenario 启用不同字段,至少需要一个非空字段。",
+      "properties": {
+        "must_contain_facts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "必须命中的事实(数字、日期、主体名称等)。每条 = 一个事实点,Judge 引擎会逐条核对"
+        },
+        "must_cite_sources": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "必须引用的来源 / 条款编号。合规场景启用"
+        },
+        "forbidden_claims": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "红线内容,模型输出若包含其中任意一项即判 L2/L3。合规场景启用"
+        },
+        "golden_answer": {
+          "type": "string",
+          "description": "参考答案。Judge LLM 兜底比对用;不要求逐字一致"
+        },
+        "scoring_rubric": {
+          "type": "string",
+          "description": "可选。自然语言描述如何打分,会注入 Judge LLM prompt"
+        }
+      },
+      "anyOf": [
+        { "required": ["must_contain_facts"] },
+        { "required": ["must_cite_sources"] },
+        { "required": ["forbidden_claims"] },
+        { "required": ["golden_answer"] }
+      ]
+    },
+
+    "metadata": {
+      "type": "object",
+      "description": "可追溯字段。不参与判题,用于人工 review。",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "原始数据来源,如『2024Q3 茅台财报 P12-13』"
+        },
+        "author_note": {
+          "type": "string",
+          "description": "构造该 case 时的备注 / 设计意图"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reviewed_by": {
+          "type": "string",
+          "description": "人工 review 通过者"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "自由标签,如 ['数字密集','长上下文','跨段推理']"
+        }
+      }
+    }
+  },
+
+  "additionalProperties": false
+}
