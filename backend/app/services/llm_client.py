@@ -140,8 +140,29 @@ async def chat(
     temperature: float = 0.2,
     max_tokens: int | None = 1024,
     extra_params: dict[str, Any] | None = None,
+    mock_reference: dict[str, Any] | None = None,
 ) -> CompletionResult:
-    """Single async chat completion via LiteLLM with retry + cost calc."""
+    """Single async chat completion via LiteLLM with retry + cost calc.
+
+    `mock_reference` is consumed only in MOCK_LLM mode (lets the deterministic
+    stand-in produce a quality-weighted answer); it is ignored for real calls.
+    """
+
+    if settings.mock_llm:
+        from app.services.mock_llm import mock_completion, mock_latency_ms
+
+        content = mock_completion(model, messages, mock_reference)
+        pt = sum(len(m.get("content", "")) for m in messages) // 4
+        ct = max(1, len(content) // 4)
+        return CompletionResult(
+            content=content,
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            latency_ms=mock_latency_ms(model, content),
+            model=model,
+            cost=cost_for(model, pt, ct),
+            raw={"mock": True},
+        )
 
     provider, key, base = resolve_provider_and_key(model, byok_keys)
     routed_model = normalize_model_for_litellm(model)

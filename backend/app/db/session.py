@@ -21,7 +21,7 @@ def _normalize(url: str) -> str:
 
 engine = create_async_engine(
     _normalize(settings.effective_database_url),
-    echo=settings.debug,
+    echo=settings.sql_echo,
     pool_pre_ping=True,
     future=True,
 )

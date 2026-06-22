@@ -18,7 +18,7 @@ const TICK_MS       = 180;          // ms between micro-batches
 const TRIALS_PER_TICK = 4;
 const LOG_KEEP      = 18;           // how many log lines to keep on screen
 
-interface ModelLane { id: string; name: string; vendor: string; share: number; costPer1k: number; }
+interface ModelLane { id: string; name: string; vendor: string; share?: number; costPer1k: number; }
 const LANES: ModelLane[] = [
     { id: 'gpt-4o',      name: 'GPT-4o',       vendor: 'OpenAI',    share: 0.25, costPer1k: 5.00 },
     { id: 'claude-46',   name: 'Claude 4.6',   vendor: 'Anthropic', share: 0.25, costPer1k: 3.00 },
@@ -68,6 +68,12 @@ function useRunStream(runId: string | undefined) {
     const [perModelSev, setPerModelSev] = useState<Record<string, { l1: number; l2: number; l3: number }>>(() =>
         Object.fromEntries(LANES.map(l => [l.id, { l1: 0, l2: 0, l3: 0 }]))
     );
+    // For real runs these are replaced from the run/experiment config; mock keeps defaults.
+    const [total, setTotal] = useState(TOTAL_TRIALS);
+    const [lanes, setLanes] = useState<ModelLane[]>(LANES);
+    const [meta, setMeta] = useState<{ title: string; scenario: string; models: number }>(
+        { title: 'Model Selection', scenario: 'fraud detection', models: LANES.length }
+    );
 
     // Refs hold the authoritative state — setters are called once per tick (no nested updaters)
     const doneRef     = useRef(0);
@@ -80,18 +86,42 @@ function useRunStream(runId: string | undefined) {
         Object.fromEntries(LANES.map(l => [l.id, { l1: 0, l2: 0, l3: 0 }]))
     );
     const rngRef      = useRef(makeRng(7));
-    const startRef    = useRef<number>(Date.now());
+    const startRef    = useRef<number>(0);
 
     const isReal = isRealRunId(runId);
+
+    // Stamp the run start once on mount (kept out of render for purity).
+    useEffect(() => { startRef.current = Date.now(); }, []);
 
     useEffect(() => {
         // ─── REAL backend SSE path ─────────────────────────────────
         if (isReal && runId) {
-            let total = TOTAL_TRIALS;
+            let cancelled = false;
+            let totalLocal = TOTAL_TRIALS;
+
+            // Fetch the run + experiment so the progress total and per-model
+            // lanes reflect THIS run (not the mock 320 / 4 fixed lanes).
+            (async () => {
+                try {
+                    const run = await api.runs.get(runId);
+                    const exp = await api.experiments.get(run.experiment_id);
+                    if (cancelled) return;
+                    const models = (exp.variable_axes.models ?? []) as string[];
+                    totalLocal = run.trial_count || TOTAL_TRIALS;
+                    setTotal(totalLocal);
+                    if (models.length) {
+                        setLanes(models.map(m => ({
+                            id: m, name: m.split('/').pop() || m, vendor: m.split('/')[0] || '', costPer1k: 0,
+                        })));
+                    }
+                    setMeta({ title: exp.title, scenario: exp.scenario, models: models.length });
+                } catch { /* keep mock defaults if config unavailable */ }
+            })();
+
             const apply = (ev: { idx: number; model: string | null; case_code: string | null;
                                  severity: string | null; cost: number; latency_ms: number;
                                  done: number; total: number; type: string }) => {
-                if (ev.total > 0) total = ev.total;
+                if (ev.total > 0) { totalLocal = ev.total; setTotal(ev.total); }
                 const verdict = (ev.severity === 'L0' || !ev.severity) ? 'PASS' : (ev.severity as 'L1' | 'L2' | 'L3');
                 const laneId = ev.model || 'unknown';
                 const newEv: TrialEvent = {
@@ -125,10 +155,28 @@ function useRunStream(runId: string | undefined) {
 
             const cleanup = api.runs.stream(runId, {
                 onTrial: apply,
-                onComplete: (ev) => {
-                    if (ev.total > 0) total = ev.total;
-                    doneRef.current = total;
-                    setDone(total);
+                onComplete: async (ev) => {
+                    if (ev.total > 0) { totalLocal = ev.total; setTotal(ev.total); }
+                    doneRef.current = totalLocal;
+                    setDone(totalLocal);
+                    // The stream may replay only 'complete' (e.g. landing on an
+                    // already-finished run) — backfill final per-lane counts +
+                    // cost from the authoritative report.
+                    try {
+                        const rep = await api.runs.report(runId);
+                        if (cancelled) return;
+                        const pm: Record<string, number> = {};
+                        const ps: Record<string, { l1: number; l2: number; l3: number }> = {};
+                        for (const c of rep.candidates) {
+                            pm[c.model] = c.trials;
+                            ps[c.model] = { l1: c.l1, l2: c.l2, l3: c.l3 };
+                        }
+                        laneRef.current = pm;
+                        sevRef.current = ps;
+                        setPerModel(pm);
+                        setPerModelSev(ps);
+                        setCost(rep.run.cost_actual);
+                    } catch { /* keep streamed values */ }
                 },
                 onError: (e) => {
                     console.error('SSE error', e);
@@ -136,7 +184,7 @@ function useRunStream(runId: string | undefined) {
             });
 
             const tid = setInterval(() => setEla(Math.floor((Date.now() - startRef.current) / 1000)), 250);
-            return () => { cleanup(); clearInterval(tid); };
+            return () => { cancelled = true; cleanup(); clearInterval(tid); };
         }
 
         // ─── MOCK simulator path (kept for offline demos) ──────────
@@ -204,7 +252,7 @@ function useRunStream(runId: string | undefined) {
         return () => { clearInterval(id); clearInterval(tid); };
     }, [runId, isReal]);
 
-    return { done, log, elapsed, costNow, perModel, perModelSev, isReal };
+    return { done, total, lanes, meta, log, elapsed, costNow, perModel, perModelSev, isReal };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -214,11 +262,11 @@ function useRunStream(runId: string | undefined) {
 export default function RunLive() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { done, log, elapsed, costNow, perModel, perModelSev } = useRunStream(id);
+    const { done, total, lanes, meta, log, elapsed, costNow, perModel, perModelSev } = useRunStream(id);
 
-    const pct      = (done / TOTAL_TRIALS) * 100;
-    const complete = done >= TOTAL_TRIALS;
-    const remaining = TOTAL_TRIALS - done;
+    const pct      = total > 0 ? (done / total) * 100 : 0;
+    const complete = total > 0 && done >= total;
+    const remaining = Math.max(0, total - done);
     const rate     = elapsed > 0 ? done / elapsed : 0;
     const etaSec   = rate > 0 && !complete ? Math.round(remaining / rate) : 0;
     const eta      = formatDuration(etaSec);
@@ -246,13 +294,13 @@ export default function RunLive() {
                     )}
                 </h1>
                 <div className="mt-3 flex items-center gap-3 text-[12px] text-[var(--color-text-muted)] font-data tracking-[0.04em]">
-                    <span>MODEL SELECTION</span>
+                    <span className="uppercase">{meta.title}</span>
                     <span className="text-[var(--color-text-fade)]">·</span>
-                    <span>FRAUD DETECTION</span>
+                    <span className="uppercase">{meta.scenario.replace(/_/g, ' ')}</span>
                     <span className="text-[var(--color-text-fade)]">·</span>
-                    <span>4 MODELS × 80 CASES</span>
+                    <span>{meta.models} MODELS</span>
                     <span className="text-[var(--color-text-fade)]">·</span>
-                    <span>{TOTAL_TRIALS} TRIALS</span>
+                    <span>{total} TRIALS</span>
                 </div>
             </header>
 
@@ -289,7 +337,7 @@ export default function RunLive() {
                             <div className="text-right font-data">
                                 <div className="text-[28px] text-[var(--color-text-bright)]">
                                     {done.toLocaleString()}
-                                    <span className="text-[16px] text-[var(--color-text-fade)]"> / {TOTAL_TRIALS}</span>
+                                    <span className="text-[16px] text-[var(--color-text-fade)]"> / {total}</span>
                                 </div>
                                 <div className="text-[10px] tracking-[0.22em] text-[var(--color-text-dim)] mt-0.5">
                                     {complete ? 'TRIALS · ALL DONE' : `${remaining} TRIALS REMAINING`}
@@ -310,7 +358,7 @@ export default function RunLive() {
                     </div>
 
                     {/* Current activity (live) */}
-                    <CurrentActivity currentModel={currentModel} complete={complete} latestLog={log[0]} />
+                    <CurrentActivity currentModel={currentModel} complete={complete} latestLog={log[0]} lanes={lanes} total={total} />
                 </div>
             </section>
 
@@ -318,13 +366,15 @@ export default function RunLive() {
             <section className="mb-8">
                 <div className="tl-rule mb-4"><span>PER-MODEL LANES</span></div>
                 <div className="space-y-4">
-                    {LANES.map(l => {
-                        const total = Math.round(TOTAL_TRIALS * l.share);
+                    {lanes.map(l => {
+                        const laneTotal = l.share !== undefined
+                            ? Math.round(total * l.share)
+                            : Math.round(total / (lanes.length || 1));
                         const got = perModel[l.id] ?? 0;
-                        const lanePct = total > 0 ? (got / total) * 100 : 0;
-                        const sev = perModelSev[l.id];
+                        const lanePct = laneTotal > 0 ? Math.min(100, (got / laneTotal) * 100) : 0;
+                        const sev = perModelSev[l.id] ?? { l1: 0, l2: 0, l3: 0 };
                         const isLive = currentModel === l.id && !complete;
-                        const laneComplete = got >= total;
+                        const laneComplete = got >= laneTotal && laneTotal > 0;
                         return (
                             <div key={l.id} className="grid grid-cols-[200px_minmax(0,1fr)_140px_120px] gap-4 items-center">
                                 {/* Model name */}
@@ -343,7 +393,7 @@ export default function RunLive() {
                                             : 'text-[var(--color-text-bright)]'
                                         }`}>{l.name}</div>
                                         <div className="text-[10px] font-data text-[var(--color-text-fade)] tracking-[0.1em] uppercase mt-0.5">
-                                            {l.vendor} · ¥{l.costPer1k.toFixed(2)}/1K
+                                            {l.vendor}{l.costPer1k > 0 ? ` · ¥${l.costPer1k.toFixed(2)}/1K` : ''}
                                         </div>
                                     </div>
                                 </div>
@@ -354,7 +404,7 @@ export default function RunLive() {
                                 {/* Counts */}
                                 <div className="font-data text-[12px]">
                                     <span className="text-[var(--color-text-bright)]">{got}</span>
-                                    <span className="text-[var(--color-text-fade)]"> / {total}</span>
+                                    <span className="text-[var(--color-text-fade)]"> / {laneTotal}</span>
                                 </div>
 
                                 {/* Severity tally */}
@@ -486,8 +536,8 @@ function LaneBar({ pct, live, complete }: { pct: number; live: boolean; complete
     );
 }
 
-function CurrentActivity({ currentModel, complete, latestLog }:
-    { currentModel?: string; complete: boolean; latestLog?: TrialEvent }) {
+function CurrentActivity({ currentModel, complete, latestLog, lanes, total }:
+    { currentModel?: string; complete: boolean; latestLog?: TrialEvent; lanes: ModelLane[]; total: number }) {
 
     if (complete) {
         return (
@@ -500,13 +550,13 @@ function CurrentActivity({ currentModel, complete, latestLog }:
                     Run complete.
                 </div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                    All {TOTAL_TRIALS} trials submitted to scoring engine.
+                    All {total} trials submitted to scoring engine.
                 </div>
             </div>
         );
     }
 
-    const lane = LANES.find(l => l.id === currentModel);
+    const lane = lanes.find(l => l.id === currentModel);
     return (
         <div className="border border-[var(--color-border)] px-5 py-4 bg-[var(--color-panel)]">
             <div className="flex items-center gap-2 mb-2">

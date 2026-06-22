@@ -109,3 +109,5 @@ class SettingsOut(BaseModel):
     openai_configured: bool
     # server has its own dev key as fallback?
     server_fallback_siliconflow: bool
+    # deterministic offline LLM active — runs don't hit real providers
+    mock_llm: bool = False

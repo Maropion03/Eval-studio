@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { api, type Dataset as RealDataset, APIError } from '../services/api';
 
@@ -48,6 +48,26 @@ const DATASETS: DatasetOption[] = [
         icon: '◬',
     },
 ];
+
+const SCENARIO_ICON: Record<string, string> = {
+    financial_qa: '￥', compliance_audit: '§', research_summary: '∑', fraud_detection: '◬', custom: '◇',
+};
+
+/** Map a real backend Dataset (starter or upload) into the Step-1 card shape,
+ *  so uploaded datasets are selectable and runnable, not just the mock starters. */
+function toOption(d: RealDataset): DatasetOption {
+    return {
+        id: d.id,
+        code: d.code,
+        name: d.name,
+        cases: d.cases_count,
+        avgTokens: d.avg_tokens,
+        typicalL2Rate: d.typical_l2_rate,
+        source: d.source ?? (d.is_starter ? 'starter pack' : 'your upload'),
+        blurb: d.blurb ?? '',
+        icon: SCENARIO_ICON[d.scenario] ?? '◇',
+    };
+}
 
 interface PromptVersion {
     id: string;
@@ -129,8 +149,10 @@ function kindFromSelection(modelCount: number, promptCount: number): 'PROMPT' | 
 
 export default function NewRun() {
     const navigate = useNavigate();
+    const location = useLocation();
+    const preselectId = (location.state as { datasetId?: string } | null)?.datasetId;
     const [step, setStep] = useState<StepId>(1);
-    const [datasetId, setDatasetId] = useState<string>('fraud_detection');
+    const [datasetId, setDatasetId] = useState<string>(preselectId ?? 'fraud_detection');
     const [promptIds, setPromptIds] = useState<Set<string>>(new Set(['v3', 'v4']));
     const [modelIds, setModelIds] = useState<Set<string>>(new Set(['ds-v3', 'ds-v32', 'ds-r1', 'qwen-72b']));
     const [temperature, setTemperature] = useState(0.2);
@@ -147,18 +169,35 @@ export default function NewRun() {
     useEffect(() => {
         let cancelled = false;
         api.datasets.list()
-            .then((ds) => { if (!cancelled) setRealDatasets(ds); })
+            .then((ds) => {
+                if (cancelled) return;
+                setRealDatasets(ds);
+                // Switch selection onto a real dataset id: honour the preselect
+                // from the Datasets page, else map the default scenario, else first.
+                setDatasetId((cur) => {
+                    if (ds.some(d => d.id === cur)) return cur;
+                    if (preselectId && ds.some(d => d.id === preselectId)) return preselectId;
+                    const byScenario = ds.find(d => d.scenario === cur);
+                    return byScenario?.id ?? ds[0]?.id ?? cur;
+                });
+            })
             .catch(() => { /* offline — fall back to mock UI */ });
         return () => { cancelled = true; };
-    }, []);
+    }, [preselectId]);
 
-    const dataset = DATASETS.find(d => d.id === datasetId)!;
+    // Real datasets (starter + uploads) drive the cards once loaded; the mock
+    // catalogue is the offline fallback so the demo still renders if API is down.
+    const datasetOptions: DatasetOption[] = (realDatasets && realDatasets.length)
+        ? realDatasets.map(toOption)
+        : DATASETS;
+    const dataset = datasetOptions.find(d => d.id === datasetId) ?? datasetOptions[0];
 
     // ── Live calc ─────────────────────────────────────────────
     const calc = useMemo(() => {
         const N = promptIds.size || 1;
         const M = modelIds.size || 1;
-        const K = dataset.cases;
+        // Backend caps cases per run for demo cost control (DEFAULT_MAX_TRIALS).
+        const K = Math.min(dataset.cases, 40);
         const trials = N * M * K;
 
         let totalTokens = 0;
@@ -207,9 +246,10 @@ export default function NewRun() {
                 navigate('/runs/run-042/live');
                 return;
             }
-            const real = realDatasets.find(d => d.scenario === dataset.id);
+            const real = realDatasets.find(d => d.id === datasetId)
+                ?? realDatasets.find(d => d.scenario === dataset.id);
             if (!real) {
-                throw new Error(`scenario ${dataset.id} not found on backend`);
+                throw new Error(`dataset ${datasetId} not found on backend`);
             }
 
             // Resolve model.apiId for the backend call (not the display id)
@@ -264,8 +304,10 @@ export default function NewRun() {
             <div className="mt-8">
                 {step === 1 && (
                     <Step1Dataset
+                        options={datasetOptions}
                         selected={datasetId}
                         onSelect={setDatasetId}
+                        onUpload={() => navigate('/datasets')}
                     />
                 )}
                 {step === 2 && (
@@ -369,12 +411,17 @@ function Stepper({ step, setStep, ready }: { step: StepId; setStep: (s: StepId) 
 //  Step 1 · Dataset cards
 // ════════════════════════════════════════════════════════════════════
 
-function Step1Dataset({ selected, onSelect }: { selected: string; onSelect: (id: string) => void }) {
+function Step1Dataset({ options, selected, onSelect, onUpload }: {
+    options: DatasetOption[];
+    selected: string;
+    onSelect: (id: string) => void;
+    onUpload: () => void;
+}) {
     return (
         <div>
-            <div className="tl-rule mb-5"><span>STARTER PACK · 4 SCENARIOS · 140 SEED CASES</span></div>
+            <div className="tl-rule mb-5"><span>{options.length} DATASETS · STARTER PACK + YOUR UPLOADS</span></div>
             <div className="grid grid-cols-2 gap-5">
-                {DATASETS.map(d => {
+                {options.map(d => {
                     const active = d.id === selected;
                     return (
                         <button
@@ -452,6 +499,7 @@ function Step1Dataset({ selected, onSelect }: { selected: string; onSelect: (id:
 
                 {/* Upload card */}
                 <button
+                    onClick={onUpload}
                     className="p-5 border border-dashed border-[var(--color-border-strong)]
                                hover:border-[var(--color-amber)] hover:bg-[var(--color-amber-trace)]
                                transition-colors duration-100 group col-span-2 text-left"
@@ -489,12 +537,12 @@ function Step2Variables({
 }) {
     const togglePrompt = (id: string) => {
         const next = new Set(promptIds);
-        next.has(id) ? next.delete(id) : next.add(id);
+        if (next.has(id)) next.delete(id); else next.add(id);
         setPromptIds(next);
     };
     const toggleModel = (id: string) => {
         const next = new Set(modelIds);
-        next.has(id) ? next.delete(id) : next.add(id);
+        if (next.has(id)) next.delete(id); else next.add(id);
         setModelIds(next);
     };
 
@@ -703,7 +751,7 @@ function Slider({ label, value, min, max, step, onChange, format, help, disabled
 function Step3Judges({ judges, setJudges }: { judges: Set<string>; setJudges: (s: Set<string>) => void }) {
     const toggle = (id: string) => {
         const next = new Set(judges);
-        next.has(id) ? next.delete(id) : next.add(id);
+        if (next.has(id)) next.delete(id); else next.add(id);
         setJudges(next);
     };
 

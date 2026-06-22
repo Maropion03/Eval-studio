@@ -14,7 +14,7 @@ export default function Sidebar() {
         to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
 
     return (
-        <aside className="flex flex-col w-[248px] h-screen fixed left-0 top-0 z-30 border-r border-[var(--color-border)] bg-[var(--color-canvas)]">
+        <aside className="flex flex-col w-[248px] h-screen fixed left-0 top-0 z-30 border-r border-[var(--color-border)] bg-[var(--color-canvas)] print:hidden">
             {/* Wordmark */}
             <div className="px-5 pt-6 pb-5 border-b border-[var(--color-border)] relative">
                 <div className="font-crt glow-amber text-[36px] leading-[0.85] tracking-[0.04em] text-[var(--color-amber)]">
