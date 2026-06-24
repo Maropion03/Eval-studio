@@ -1,0 +1,63 @@
+# Render Blueprint — FastAPI backend + managed Postgres for Eval Studio v2.
+#
+# Deploy: Render Dashboard → New → Blueprint → connect this GitHub repo → Apply.
+# Render provisions the Postgres database and the web service, and wires
+# DATABASE_URL automatically. Then open the service → Environment and fill in
+# SILICONFLOW_API_KEY (and/or DEEPSEEK_API_KEY / OPENAI_API_KEY) — these are
+# marked `sync: false`, so Render prompts for them and never stores them in git.
+#
+# After the service is live, copy its URL (https://eval-studio-api-XXXX.onrender.com)
+# and add the Vercel rewrite in vercel.json (see docs/DEPLOY.md) so the frontend's
+# /api calls proxy to it on the same origin.
+
+databases:
+  - name: eval-studio-db
+    plan: free
+    databaseName: eval_studio
+    user: eval_studio
+
+services:
+  - type: web
+    name: eval-studio-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # Migrate (alembic env is async + normalizes the URL to asyncpg), (re)load the
+    # 140 starter cases, then serve. Single persistent process — the in-process
+    # SSE event bus + background run tasks require one instance (do not scale > 1).
+    startCommand: python -m alembic upgrade head && python -m app.fixtures.load_from_json && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: eval-studio-db
+          property: connectionString
+      # Real model calls (MOCK_LLM=0). Fill a provider key below to enable them.
+      - key: MOCK_LLM
+        value: "0"
+      - key: DEBUG
+        value: "0"
+      # Fixed judge/writer roles — set to a model your key/provider actually serves.
+      - key: JUDGE_MODEL
+        value: deepseek-ai/DeepSeek-V3
+      - key: WRITER_MODEL
+        value: deepseek-ai/DeepSeek-V3
+      - key: SILICONFLOW_BASE_URL
+        value: https://api.siliconflow.cn/v1
+      # Secrets — Render prompts for these; never committed.
+      - key: SILICONFLOW_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RATE_LIMIT_PER_HOUR
+        value: "200"
+      - key: SESSION_COOKIE_NAME
+        value: eval_studio_sid
+      # Direct-access fallback (not used when /api is proxied through Vercel).
+      - key: CORS_ORIGINS
+        value: https://eval-studio.vercel.app

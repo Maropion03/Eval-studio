@@ -1,0 +1,17 @@
+# Runtime deps for hosted deploy (Render etc.). Mirrors pyproject [project.dependencies].
+# Local dev should still use `uv pip install -e .` from pyproject.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30
+aiosqlite>=0.20
+alembic>=1.14
+litellm>=1.55
+httpx>=0.27
+sse-starlette>=2.1
+slowapi>=0.1.9
+python-multipart>=0.0.17
+tenacity>=9.0
+orjson>=3.10
