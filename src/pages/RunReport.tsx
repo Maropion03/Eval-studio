@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { api, type RunReportData } from '../services/api';
+import { api, type RunReportData, type CandidateSummary } from '../services/api';
 
 function isRealRunId(id: string | undefined): boolean {
     return !!id && id.startsWith('run_');
@@ -86,9 +86,9 @@ const totalCases = (m: number) =>
 //  Page header + summary strip
 // ════════════════════════════════════════════════════════════════════
 
-function PageHeader({ id }: { id: string }) {
+function PageHeader({ id, onExport }: { id: string; onExport?: () => void }) {
     return (
-        <header className="mb-6">
+        <header className="mb-6 print:hidden">
             <div className="flex items-end justify-between gap-6">
                 <div>
                     <div className="flex items-center gap-3 text-[10.5px] tracking-[0.28em] text-[var(--color-text-dim)]">
@@ -119,16 +119,17 @@ function PageHeader({ id }: { id: string }) {
                 <div className="flex items-center gap-2">
                     <ActionButton label="REPLAY" hint="⌘R" />
                     <ActionButton label="SHARE" hint="⌘S" />
-                    <ActionButton label="EXPORT PDF" hint="⌘E" primary />
+                    <ActionButton label="EXPORT PDF" hint="⌘E" primary onClick={onExport} />
                 </div>
             </div>
         </header>
     );
 }
 
-function ActionButton({ label, hint, primary }: { label: string; hint: string; primary?: boolean }) {
+function ActionButton({ label, hint, primary, onClick }: { label: string; hint: string; primary?: boolean; onClick?: () => void }) {
     return (
         <button
+            onClick={onClick}
             className={`
                 relative px-3.5 py-2 font-mono text-[11px] tracking-[0.18em]
                 border transition-colors duration-100 group
@@ -169,7 +170,7 @@ function SummaryStrip() {
         : 'text-[var(--color-text-bright)]';
 
     return (
-        <div className="grid grid-cols-8 border-y border-[var(--color-border)]">
+        <div className="grid grid-cols-8 border-y border-[var(--color-border)] print:hidden">
             {cells.map((c, i) => (
                 <div key={c.label}
                      className={`px-4 py-3 ${i === cells.length - 1 ? '' : 'border-r border-[var(--color-border)]'}`}>
@@ -199,7 +200,7 @@ function TabBar({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
         { id: 'decision', label: 'C · DECISION BOOK', sub: 'Stakeholder report' },
     ];
     return (
-        <div className="flex items-stretch border-b border-[var(--color-border)]">
+        <div className="flex items-stretch border-b border-[var(--color-border)] print:hidden">
             {tabs.map(t => (
                 <button
                     key={t.id}
@@ -278,7 +279,12 @@ function MatrixCell({ cell, deltaVs }: { cell: Cell; deltaVs?: number }) {
     );
 }
 
-function MatrixTab() {
+function MatrixTab({ data }: { data: RunReportData | null }) {
+    if (data && data.candidates.length) return <RealMatrixTab data={data} />;
+    return <MockMatrixTab />;
+}
+
+function MockMatrixTab() {
     // baseline for delta calc: first model (GPT-4o) per slice
     const baseline = MATRIX[0];
 
@@ -600,7 +606,12 @@ function SeverityStack() {
     );
 }
 
-function AnalysisTab() {
+function AnalysisTab({ data }: { data: RunReportData | null }) {
+    if (data && data.candidates.length) return <RealAnalysisTab data={data} />;
+    return <MockAnalysisTab />;
+}
+
+function MockAnalysisTab() {
     return (
         <div className="reveal-in p-6 space-y-8">
             {/* Pareto */}
@@ -686,6 +697,259 @@ function AnalysisTab() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  Real-data Matrix + Analysis (rendered for real run ids)
+// ════════════════════════════════════════════════════════════════════
+
+const CAND_COLORS = [
+    'var(--color-amber)', 'var(--color-mint)', 'var(--color-amber-bright)',
+    'var(--color-text-muted)', '#7AA2F7', '#C792EA', '#F78C6C', '#82AAFF',
+];
+const candColor = (i: number) => CAND_COLORS[i % CAND_COLORS.length];
+
+function RealSeverityDots({ l0, l1, l2, l3 }: { l0: number; l1: number; l2: number; l3: number }) {
+    const dots = [
+        { n: l0, c: 'var(--color-L0)' }, { n: l1, c: 'var(--color-L1)' },
+        { n: l2, c: 'var(--color-L2)' }, { n: l3, c: 'var(--color-L3)' },
+    ];
+    return (
+        <div className="flex items-center gap-2 text-[9.5px] font-data tracking-wider">
+            {dots.map((d, i) => d.n > 0 ? (
+                <span key={i} className="flex items-center gap-0.5">
+                    <span className="inline-block w-[5px] h-[5px]" style={{ background: d.c, boxShadow: i >= 2 ? `0 0 4px ${d.c}` : undefined }} />
+                    <span style={{ color: i >= 2 ? d.c : 'var(--color-text-fade)' }}>{d.n}</span>
+                </span>
+            ) : null)}
+        </div>
+    );
+}
+
+function RealMatrixTab({ data }: { data: RunReportData }) {
+    const cands = [...data.candidates].sort((a, b) => b.pass_rate - a.pass_rate);
+    const meanPass = cands.reduce((s, c) => s + c.pass_rate, 0) / (cands.length || 1);
+    const cols = 'grid grid-cols-[minmax(0,1fr)_90px_minmax(130px,1.3fr)_96px_100px_70px]';
+    return (
+        <div className="reveal-in">
+            <div className="px-4 py-2.5 flex items-center justify-between border-b border-[var(--color-border)] text-[10px] tracking-[0.16em] text-[var(--color-text-dim)] font-data">
+                <span>SCOREBOARD · {data.experiment.scenario.toUpperCase()} · {cands.length} CANDIDATES · Δ vs MEAN</span>
+                <span className="flex items-center gap-3">
+                    {[['L0', 'PASS'], ['L1', 'DATA'], ['L2', 'COMP'], ['L3', 'DEC']].map(([s]) => (
+                        <span key={s} className="flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2" style={{ background: `var(--color-${s})` }} />
+                            <span className="text-[var(--color-text-muted)]">{s}</span>
+                        </span>
+                    ))}
+                </span>
+            </div>
+            <div className={`${cols} text-[9.5px] tracking-[0.22em] text-[var(--color-text-dim)] border-b border-[var(--color-border)] bg-[var(--color-panel-2)]`}>
+                <div className="px-4 py-2.5">MODEL</div>
+                <div className="px-4 py-2.5 border-l border-[var(--color-border)] text-right">PASS</div>
+                <div className="px-4 py-2.5 border-l border-[var(--color-border)]">SEVERITY · L0/L1/L2/L3</div>
+                <div className="px-4 py-2.5 border-l border-[var(--color-border)] text-right">LAT</div>
+                <div className="px-4 py-2.5 border-l border-[var(--color-border)] text-right">¥/TRIAL</div>
+                <div className="px-4 py-2.5 border-l border-[var(--color-border)] text-right">Δ</div>
+            </div>
+            {cands.map((c) => {
+                const l0 = c.trials - c.l1 - c.l2 - c.l3;
+                const delta = (c.pass_rate - meanPass) * 100;
+                const passPct = c.pass_rate * 100;
+                return (
+                    <div key={c.model} className={`${cols} items-center border-b border-[var(--color-border)] ${c.pareto ? 'bg-[var(--color-amber-trace)]' : 'hover:bg-[rgba(255,255,255,0.015)]'}`}>
+                        <div className="px-4 py-3 relative">
+                            {c.pareto && <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-[var(--color-amber)]" style={{ boxShadow: '0 0 8px var(--color-amber)' }} />}
+                            <div className="flex items-center gap-2">
+                                {c.pareto && <span className="text-[var(--color-amber)] glow-amber-soft text-[12px]">★</span>}
+                                <span className={`text-[14px] ${c.pareto ? 'text-[var(--color-amber)] glow-amber-soft' : 'text-[var(--color-text-bright)]'}`}>{c.display_name}</span>
+                            </div>
+                            <div className="mt-1 text-[10px] tracking-[0.1em] text-[var(--color-text-muted)] font-data uppercase">{c.trials} trials</div>
+                        </div>
+                        <div className="px-4 py-3 text-right border-l border-[var(--color-border)]">
+                            <span className={`font-display text-[18px] ${passPct >= 85 ? 'text-[var(--color-mint)] glow-mint' : passPct >= 60 ? 'text-[var(--color-text-bright)]' : 'text-[var(--color-L2)]'}`}>
+                                {passPct.toFixed(0)}<span className="text-[11px] text-[var(--color-text-fade)]">%</span>
+                            </span>
+                        </div>
+                        <div className="px-4 py-3 border-l border-[var(--color-border)]"><RealSeverityDots l0={l0} l1={c.l1} l2={c.l2} l3={c.l3} /></div>
+                        <div className="px-4 py-3 text-right border-l border-[var(--color-border)] font-data text-[12px] text-[var(--color-text-muted)]">{c.avg_latency_ms.toFixed(0)}ms</div>
+                        <div className="px-4 py-3 text-right border-l border-[var(--color-border)] font-data text-[12px] text-[var(--color-amber)]">¥{c.cost_per_trial.toFixed(4)}</div>
+                        <div className="px-4 py-3 text-right border-l border-[var(--color-border)] font-data text-[11px]">
+                            <span className={delta > 0.5 ? 'text-[var(--color-mint)]' : delta < -0.5 ? 'text-[var(--color-L2)]' : 'text-[var(--color-text-fade)]'}>
+                                {delta > 0 ? '+' : ''}{delta.toFixed(0)}
+                            </span>
+                        </div>
+                    </div>
+                );
+            })}
+            <div className="px-4 py-3 text-[10px] tracking-[0.16em] text-[var(--color-text-fade)] font-data flex items-center justify-between">
+                <span>SEVERITY DOTS = count per tier · Δ = pass-rate points vs candidate mean</span>
+                <span><span className="text-[var(--color-amber)]">★</span> Pareto-optimal candidate</span>
+            </div>
+        </div>
+    );
+}
+
+function RealParetoChart({ candidates }: { candidates: CandidateSummary[] }) {
+    const W = 480, H = 320, padL = 52, padR = 24, padT = 28, padB = 48;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const pts = candidates.map((c, i) => ({ name: c.display_name, cost: c.cost_per_trial, acc: c.pass_rate * 100, rec: c.pareto, color: candColor(i) }));
+    const costMax = Math.max(...pts.map(p => p.cost), 0.0001) * 1.2;
+    const accs = pts.map(p => p.acc);
+    const accMin = Math.max(0, Math.floor((Math.min(...accs) - 8) / 5) * 5);
+    const accMax = Math.min(100, Math.ceil((Math.max(...accs) + 5) / 5) * 5);
+    const sx = (c: number) => padL + (c / costMax) * innerW;
+    const sy = (a: number) => padT + (1 - (a - accMin) / (accMax - accMin || 1)) * innerH;
+    const yTicks = Array.from({ length: 5 }, (_, i) => Math.round(accMin + (i * (accMax - accMin)) / 4));
+    const xTicks = Array.from({ length: 5 }, (_, i) => (i * costMax) / 4);
+    const frontier = pts.filter(p => p.rec).sort((a, b) => a.cost - b.cost);
+    return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+            {yTicks.map((a) => <line key={`gh${a}`} x1={padL} y1={sy(a)} x2={W - padR} y2={sy(a)} stroke="var(--color-border)" strokeDasharray="2 4" />)}
+            {xTicks.map((c, i) => <line key={`gv${i}`} x1={sx(c)} y1={padT} x2={sx(c)} y2={H - padB} stroke="var(--color-border)" strokeDasharray="2 4" />)}
+            <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="var(--color-border-strong)" />
+            <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="var(--color-border-strong)" />
+            {yTicks.map((a) => <text key={`yl${a}`} x={padL - 8} y={sy(a) + 3} textAnchor="end" fontSize="10" fill="var(--color-text-dim)" fontFamily="JetBrains Mono">{a}</text>)}
+            {xTicks.map((c, i) => <text key={`xl${i}`} x={sx(c)} y={H - padB + 16} textAnchor="middle" fontSize="9.5" fill="var(--color-text-dim)" fontFamily="JetBrains Mono">¥{c.toFixed(3)}</text>)}
+            <text x={padL} y={padT - 12} fontSize="10" fill="var(--color-text-muted)" fontFamily="IBM Plex Mono" letterSpacing="0.18em">↑ PASS RATE (%)</text>
+            <text x={W - padR} y={H - 6} textAnchor="end" fontSize="10" fill="var(--color-text-muted)" fontFamily="IBM Plex Mono" letterSpacing="0.18em">COST / TRIAL →</text>
+            {frontier.length > 1 && (
+                <polyline fill="none" stroke="var(--color-amber)" strokeWidth="1" strokeDasharray="4 3" opacity="0.45" points={frontier.map(p => `${sx(p.cost)},${sy(p.acc)}`).join(' ')} />
+            )}
+            {pts.map((p) => (
+                <g key={p.name}>
+                    {p.rec && (
+                        <circle cx={sx(p.cost)} cy={sy(p.acc)} r="12" fill="none" stroke="var(--color-amber)" strokeWidth="1" strokeDasharray="2 2" opacity="0.6">
+                            <animate attributeName="r" from="10" to="16" dur="2.4s" repeatCount="indefinite" />
+                            <animate attributeName="opacity" from="0.6" to="0" dur="2.4s" repeatCount="indefinite" />
+                        </circle>
+                    )}
+                    <circle cx={sx(p.cost)} cy={sy(p.acc)} r={p.rec ? 6 : 4.5} fill={p.color} style={{ filter: `drop-shadow(0 0 6px ${p.color})` }} />
+                    <text x={sx(p.cost) + 10} y={sy(p.acc) + 4} fontSize="11" fill="var(--color-text-bright)" fontFamily="IBM Plex Mono">{p.name}</text>
+                </g>
+            ))}
+        </svg>
+    );
+}
+
+const REAL_RADAR_AXES = ['FACT ACC', 'HALLUC AVOID', 'CITATION', 'NO FORBID', 'PASS RATE'];
+function dimVals(c: CandidateSummary): number[] {
+    const d = c.dimensions;
+    return d ? [d.fact_accuracy, d.halluc_avoid, d.citation, d.no_forbidden, d.pass_rate] : [0, 0, 0, 0, 0];
+}
+
+function RealRadarChart({ candidates }: { candidates: CandidateSummary[] }) {
+    const W = 320, H = 320, cx = W / 2, cy = H / 2, R = 110;
+    const axes = REAL_RADAR_AXES.length;
+    const angle = (i: number) => (Math.PI * 2 * i) / axes - Math.PI / 2;
+    const pt = (i: number, v: number): [number, number] => [cx + (v / 100) * R * Math.cos(angle(i)), cy + (v / 100) * R * Math.sin(angle(i))];
+    return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+            {[25, 50, 75, 100].map(p => (
+                <polygon key={p} points={Array.from({ length: axes }).map((_, i) => pt(i, p).join(',')).join(' ')} fill="none" stroke="var(--color-border)" strokeDasharray="2 3" />
+            ))}
+            {Array.from({ length: axes }).map((_, i) => {
+                const [x, y] = pt(i, 100);
+                return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="var(--color-border)" />;
+            })}
+            {REAL_RADAR_AXES.map((label, i) => {
+                const [x, y] = pt(i, 122);
+                return <text key={label} x={x} y={y} textAnchor="middle" dy="0.35em" fontSize="9" fill="var(--color-text-muted)" fontFamily="IBM Plex Mono" letterSpacing="0.08em">{label}</text>;
+            })}
+            {candidates.map((c, mi) => {
+                const color = candColor(mi);
+                const points = dimVals(c).map((v, i) => pt(i, v).join(',')).join(' ');
+                return <polygon key={c.model} points={points} fill={color} fillOpacity={c.pareto ? 0.12 : 0.05} stroke={color} strokeWidth={c.pareto ? 1.5 : 1} opacity={c.pareto ? 0.95 : 0.55} style={c.pareto ? { filter: `drop-shadow(0 0 4px ${color})` } : undefined} />;
+            })}
+        </svg>
+    );
+}
+
+function RealSeverityStack({ candidates }: { candidates: CandidateSummary[] }) {
+    return (
+        <div className="space-y-3">
+            {candidates.map((c, mi) => {
+                const l0 = c.trials - c.l1 - c.l2 - c.l3;
+                const total = c.trials || 1;
+                const pct = (n: number) => (n / total) * 100;
+                return (
+                    <div key={c.model}>
+                        <div className="flex items-center justify-between mb-1.5 text-[10.5px] font-mono tracking-[0.1em]">
+                            <span className="flex items-center gap-2">
+                                <span className="inline-block w-3 h-[2px]" style={{ background: candColor(mi), boxShadow: `0 0 4px ${candColor(mi)}` }} />
+                                <span className={c.pareto ? 'text-[var(--color-amber)] glow-amber-soft' : 'text-[var(--color-text-bright)]'}>{c.pareto && '★ '}{c.display_name}</span>
+                            </span>
+                            <span className="text-[var(--color-text-fade)] font-data">
+                                {l0} / {c.l1} / <span className="text-[var(--color-L2)]">{c.l2}</span> / <span className="text-[var(--color-L3)]">{c.l3}</span>
+                            </span>
+                        </div>
+                        <div className="h-[10px] flex overflow-hidden">
+                            <div style={{ width: `${pct(l0)}%`, background: 'var(--color-L0)', opacity: 0.7 }} />
+                            <div style={{ width: `${pct(c.l1)}%`, background: 'var(--color-L1)' }} />
+                            <div style={{ width: `${pct(c.l2)}%`, background: 'var(--color-L2)', boxShadow: c.l2 ? '0 0 6px var(--color-L2)' : undefined }} />
+                            <div style={{ width: `${pct(c.l3)}%`, background: 'var(--color-L3)', boxShadow: c.l3 ? '0 0 6px var(--color-L3)' : undefined }} />
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function RealAnalysisTab({ data }: { data: RunReportData }) {
+    const cands = data.candidates;
+    const best = [...cands].sort((a, b) => b.pass_rate - a.pass_rate)[0];
+    const cheapest = [...cands].sort((a, b) => a.cost_per_trial - b.cost_per_trial)[0];
+    return (
+        <div className="reveal-in p-6 space-y-8">
+            <section>
+                <div className="tl-rule mb-4"><span>FIG. 01 · COST × PASS-RATE PARETO</span></div>
+                <div className="grid grid-cols-[1fr_280px] gap-8 items-center">
+                    <RealParetoChart candidates={cands} />
+                    <div className="space-y-3 text-[12px] text-[var(--color-text-muted)] leading-[1.7]">
+                        <p><span className="text-[var(--color-amber)] font-mono tracking-[0.15em] text-[10px]">READING ›</span><br />Points on the dashed frontier are non-dominated — no candidate is both cheaper and more accurate.</p>
+                        {best && cheapest && (
+                            <p className="border-t border-[var(--color-border)] pt-3">
+                                Highest pass rate: <span className="text-[var(--color-mint)]">{best.display_name} {(best.pass_rate * 100).toFixed(0)}%</span>.
+                                Lowest cost: <span className="text-[var(--color-amber)]">{cheapest.display_name} ¥{cheapest.cost_per_trial.toFixed(4)}/trial</span>.
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </section>
+            <section>
+                <div className="tl-rule mb-4"><span>FIG. 02 · MULTI-DIMENSIONAL CAPABILITY</span></div>
+                <div className="grid grid-cols-[320px_1fr] gap-8 items-center">
+                    <RealRadarChart candidates={cands} />
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                            {cands.map((c, i) => (
+                                <div key={c.model} className="flex items-center gap-2.5 text-[11px] font-mono">
+                                    <span className="inline-block w-3 h-[2px]" style={{ background: candColor(i), boxShadow: `0 0 4px ${candColor(i)}` }} />
+                                    <span className={c.pareto ? 'text-[var(--color-amber)]' : 'text-[var(--color-text-bright)]'}>{c.display_name}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="text-[12px] text-[var(--color-text-muted)] leading-[1.7] border-t border-[var(--color-border)] pt-3">
+                            <span className="text-[var(--color-amber)] font-mono tracking-[0.15em] text-[10px]">READING ›</span><br />
+                            Five judge dimensions per candidate, averaged across trials (0–100). Larger filled area = stronger overall.
+                        </p>
+                    </div>
+                </div>
+            </section>
+            <section>
+                <div className="tl-rule mb-4"><span>FIG. 03 · SEVERITY DISTRIBUTION</span></div>
+                <div className="grid grid-cols-[1fr_280px] gap-8 items-start">
+                    <RealSeverityStack candidates={cands} />
+                    <div className="space-y-3 text-[12px] text-[var(--color-text-muted)] leading-[1.7]">
+                        <p><span className="text-[var(--color-amber)] font-mono tracking-[0.15em] text-[10px]">READING ›</span><br />Each bar = that candidate's trials. Width ∝ count per severity tier.</p>
+                        <p className="text-[11px] border-t border-[var(--color-border)] pt-3 font-mono tracking-wide">
+                            <span className="text-[var(--color-L0)]">L0</span> PASS · <span className="text-[var(--color-L1)]">L1</span> DATA·DEV · <span className="text-[var(--color-L2)]">L2</span> COMP·INC · <span className="text-[var(--color-L3)]">L3</span> DEC·ERR
+                        </p>
+                    </div>
+                </div>
+            </section>
+        </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  Tab C · DECISION BOOK (Bureau Report aesthetic)
 // ════════════════════════════════════════════════════════════════════
 
@@ -709,7 +973,32 @@ const NARRATIVES: Record<Audience, { caps: string; title: string; body: string }
     },
 };
 
-function DecisionBookTab() {
+function DecisionBookTab({ data }: { data: RunReportData | null }) {
+    // Real run with a generated book → render the live Bureau memo.
+    if (data?.decision_book) return <RealDecisionBook data={data} book={data.decision_book} />;
+    // Real run still compiling its book.
+    if (data) return <DecisionBookCompiling status={data.run.status} />;
+    // Demo / mock run id → the designed showcase memo.
+    return <MockDecisionBook />;
+}
+
+function DecisionBookCompiling({ status }: { status: string }) {
+    return (
+        <div className="bureau bureau-isolate reveal-in">
+            <div className="max-w-[860px] mx-auto px-12 py-24 text-center">
+                <div className="bureau-meta">DECISION · BOOK</div>
+                <div className="mt-6 font-serif text-[26px] italic text-[var(--bureau-ink-soft)]">
+                    {status === 'running' || status === 'queued'
+                        ? 'The memo is being compiled as trials complete…'
+                        : 'No decision book was generated for this run.'}
+                </div>
+                <div className="mt-4 bureau-caps">status · {status}</div>
+            </div>
+        </div>
+    );
+}
+
+function MockDecisionBook() {
     const [aud, setAud] = useState<Audience>('boss');
 
     return (
@@ -877,6 +1166,217 @@ function DecisionBookTab() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  Tab C · DECISION BOOK — real run data, Bureau aesthetic
+// ════════════════════════════════════════════════════════════════════
+
+const AUD_CAPS: Record<Audience, string> = {
+    boss: 'FOR · LEADERSHIP',
+    compliance: 'FOR · COMPLIANCE',
+    engineering: 'FOR · ENGINEERING',
+};
+
+function RealDecisionBook({ data, book }: { data: RunReportData; book: NonNullable<RunReportData['decision_book']> }) {
+    const [aud, setAud] = useState<Audience>('boss');
+    const board = (book.scoreboard && book.scoreboard.length ? book.scoreboard : data.candidates) ?? [];
+    const recName = book.recommendation.model;
+    const memoNo = data.run.id.replace(/^run_/, '').slice(0, 6).toUpperCase();
+    const date = data.run.finished_at ? new Date(data.run.finished_at).toISOString().slice(0, 10) : '—';
+    const hasNarratives = !!book.narratives && (['boss', 'compliance', 'engineering'] as Audience[]).some(
+        (a) => book.narratives?.[a]?.body?.trim(),
+    );
+    const failures = book.failures ?? data.failures ?? [];
+
+    return (
+        <div className="bureau bureau-isolate reveal-in">
+            <div className="max-w-[860px] mx-auto px-12 py-16 relative">
+                {/* Header */}
+                <div className="flex items-start justify-between mb-12 gap-6">
+                    <div>
+                        <div className="bureau-meta">DECISION · BOOK · MEMO No. {memoNo}</div>
+                        <h1 className="mt-4 text-[42px] leading-[1.05] tracking-[-0.01em]">
+                            {data.experiment.title}
+                        </h1>
+                        <div className="mt-3 text-[14px] italic text-[var(--bureau-ink-soft)]">
+                            Prepared by Eval Studio · {data.experiment.scenario.replace(/_/g, ' ')} ·
+                            {' '}{data.run.trials_done} trials · {date}
+                        </div>
+                    </div>
+                    <div className="bureau-stamp">
+                        Recommendation<br />{recName}
+                    </div>
+                </div>
+
+                <div className="bureau-rule-thick mb-10" />
+
+                {/* 01 — Recommendation */}
+                <section className="grid grid-cols-[120px_1fr] gap-8 mb-14">
+                    <div className="bureau-section-num">01</div>
+                    <div>
+                        <div className="bureau-caps mb-2">Recommendation</div>
+                        <h2 className="text-[26px] leading-[1.25] tracking-[-0.005em] mb-4">
+                            {book.recommendation.headline}
+                        </h2>
+                        {book.recommendation.pull_quote && (
+                            <div className="bureau-pull mt-6">“{book.recommendation.pull_quote}”</div>
+                        )}
+                    </div>
+                </section>
+
+                {/* 02 — Tradeoff snapshot */}
+                {board.length > 0 && (
+                    <>
+                        <div className="bureau-rule mb-10" />
+                        <section className="grid grid-cols-[120px_1fr] gap-8 mb-14">
+                            <div className="bureau-section-num">02</div>
+                            <div>
+                                <div className="bureau-caps mb-3">Tradeoff Snapshot</div>
+                                <div className="grid gap-4 mb-6" style={{ gridTemplateColumns: `repeat(${Math.min(board.length, 4)}, minmax(0, 1fr))` }}>
+                                    {board.slice(0, 4).map((c) => {
+                                        const isRec = c.display_name === recName || c.pareto;
+                                        return (
+                                            <div key={c.model} className={`pt-3 border-t-2 ${isRec ? 'border-[var(--bureau-seal)]' : 'border-[var(--bureau-rule)]'}`}>
+                                                <div className="bureau-caps">{c.pareto && '★ '}{c.display_name}</div>
+                                                <div className="font-serif text-[24px] mt-1">
+                                                    {(c.pass_rate * 100).toFixed(1)}<span className="text-[14px] text-[var(--bureau-mute)]">%</span>
+                                                </div>
+                                                <div className="font-mono text-[11px] text-[var(--bureau-mute)] mt-1 tracking-[0.05em]">
+                                                    ¥{c.cost_per_trial.toFixed(4)} / trial
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                {book.tradeoff_paragraph && (
+                                    <p className="bureau-body">{book.tradeoff_paragraph}</p>
+                                )}
+                                {book.annual_spend_table && book.annual_spend_table.rows.length > 0 && (
+                                    <div className="mt-5">
+                                        <div className="bureau-caps mb-2">Annual spend projection</div>
+                                        <div className="text-[13px] italic text-[var(--bureau-mute)] mb-2">
+                                            {book.annual_spend_table.assumptions}
+                                        </div>
+                                        <ul className="bureau-body space-y-1">
+                                            {book.annual_spend_table.rows.map((r, i) => (
+                                                <li key={i} className="flex justify-between border-b border-[var(--bureau-rule)] py-1">
+                                                    <span>{r.model}</span>
+                                                    <strong>¥{r.yuan_per_year.toLocaleString()}</strong>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+                    </>
+                )}
+
+                {/* 03 — Stakeholder narratives */}
+                {hasNarratives && (
+                    <>
+                        <div className="bureau-rule mb-10" />
+                        <section className="grid grid-cols-[120px_1fr] gap-8 mb-14">
+                            <div className="bureau-section-num">03</div>
+                            <div>
+                                <div className="bureau-caps mb-4">Stakeholder Narratives</div>
+                                <div className="flex gap-0 mb-6 border-b border-[var(--bureau-rule)]">
+                                    {(['boss', 'compliance', 'engineering'] as Audience[]).map((a) => (
+                                        <button key={a} onClick={() => setAud(a)}
+                                                className={`px-4 py-2 font-mono text-[10.5px] tracking-[0.22em] uppercase border-b-2 -mb-px transition-colors duration-150
+                                                           ${aud === a ? 'border-[var(--bureau-seal)] text-[var(--bureau-seal)]' : 'border-transparent text-[var(--bureau-mute)] hover:text-[var(--bureau-ink)]'}`}>
+                                            {a}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="reveal-in" key={aud}>
+                                    <div className="bureau-caps mb-2">{AUD_CAPS[aud]}</div>
+                                    {book.narratives?.[aud]?.title && (
+                                        <h3 className="text-[20px] leading-[1.35] mb-4 italic font-medium">
+                                            {book.narratives[aud].title}
+                                        </h3>
+                                    )}
+                                    <p className="bureau-body">{book.narratives?.[aud]?.body}</p>
+                                </div>
+                            </div>
+                        </section>
+                    </>
+                )}
+
+                {/* 04 — Risks */}
+                {book.risks && book.risks.length > 0 && (
+                    <>
+                        <div className="bureau-rule mb-10" />
+                        <section className="grid grid-cols-[120px_1fr] gap-8 mb-14">
+                            <div className="bureau-section-num">04</div>
+                            <div>
+                                <div className="bureau-caps mb-3">Known Risks &amp; Mitigations</div>
+                                <ul className="space-y-3 bureau-body">
+                                    {book.risks.map((r, i) => (
+                                        <li key={i} className="grid grid-cols-[42px_1fr] gap-3 pl-3 border-l border-[var(--bureau-rule)]">
+                                            <span className={`font-mono text-[11px] tracking-[0.15em] pt-0.5 ${r.severity === 'L2' || r.severity === 'L3' ? 'text-[var(--bureau-seal)]' : 'text-[var(--bureau-mark)]'}`}>
+                                                {r.severity}
+                                            </span>
+                                            <div>
+                                                <div>{r.risk}</div>
+                                                <div className="text-[var(--bureau-mute)] text-[13px] italic mt-1">→ {r.mitigation}</div>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </section>
+                    </>
+                )}
+
+                {/* 05 — Notable failures appendix */}
+                {failures.length > 0 && (
+                    <>
+                        <div className="bureau-rule mb-10" />
+                        <section className="grid grid-cols-[120px_1fr] gap-8 mb-14">
+                            <div className="bureau-section-num">05</div>
+                            <div>
+                                <div className="bureau-caps mb-3">Notable Failure Cases</div>
+                                <ul className="space-y-3 bureau-body">
+                                    {failures.slice(0, 5).map((f) => (
+                                        <li key={f.trial_idx} className="grid grid-cols-[42px_1fr] gap-3 pl-3 border-l border-[var(--bureau-rule)]">
+                                            <span className={`font-mono text-[11px] tracking-[0.15em] pt-0.5 ${f.severity === 'L3' ? 'text-[var(--bureau-seal)]' : 'text-[var(--bureau-mark)]'}`}>
+                                                {f.severity}
+                                            </span>
+                                            <div>
+                                                <div>{f.explanation}</div>
+                                                <div className="text-[var(--bureau-mute)] text-[12px] italic mt-1 font-mono">
+                                                    {f.model} · trial #{String(f.trial_idx).padStart(3, '0')}
+                                                </div>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </section>
+                    </>
+                )}
+
+                <div className="bureau-rule mb-10" />
+
+                {/* Footer */}
+                <footer className="flex items-end justify-between text-[var(--bureau-mute)] mt-10 gap-6">
+                    <div>
+                        <div className="bureau-caps">Filed under</div>
+                        <div className="font-serif italic text-[14px] mt-1">
+                            eval-studio · /runs/{data.run.id}
+                        </div>
+                    </div>
+                    <div className="text-right">
+                        <div className="bureau-caps">Generated by</div>
+                        <div className="font-serif text-[20px] mt-1 italic">Eval Studio</div>
+                        <div className="bureau-caps mt-1">{book._source === 'writer_llm' ? 'WRITER · LLM' : 'AGGREGATE'} · {date}</div>
+                    </div>
+                </footer>
+            </div>
+        </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  Page
 // ════════════════════════════════════════════════════════════════════
 
@@ -895,18 +1395,26 @@ export default function RunReport() {
         return () => { cancelled = true; };
     }, [id, real]);
 
+    // EXPORT PDF → jump to the Decision Book, then hand off to the browser's
+    // print-to-PDF. The print stylesheet hides all chrome (print:hidden) so
+    // only the Bureau memo lands on the page.
+    const handleExport = () => {
+        setTab('decision');
+        window.requestAnimationFrame(() => setTimeout(() => window.print(), 80));
+    };
+
     return (
         <div className="max-w-[1320px] mx-auto reveal-in">
-            <PageHeader id={id ?? 'run-040'} />
+            <PageHeader id={id ?? 'run-040'} onExport={handleExport} />
             <SummaryStrip />
 
             {real && <LiveDataPanel data={realData} runId={id ?? ''} />}
 
             <div className="mt-8">
                 <TabBar tab={tab} setTab={setTab} />
-                {tab === 'matrix'   && <MatrixTab />}
-                {tab === 'analysis' && <AnalysisTab />}
-                {tab === 'decision' && <DecisionBookTab />}
+                {tab === 'matrix'   && <MatrixTab data={realData} />}
+                {tab === 'analysis' && <AnalysisTab data={realData} />}
+                {tab === 'decision' && <DecisionBookTab data={realData} />}
             </div>
         </div>
     );

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
 
     # ── App ──
     debug: bool = False
+    # SQL statement echo — decoupled from debug so local http dev (which needs
+    # debug=1 for non-secure session cookies) doesn't spam the logs.
+    sql_echo: bool = False
+    # Deterministic offline LLM. When on, the whole pipeline runs keyless with
+    # stable results — for local demos and the test suite. Off in production.
+    mock_llm: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     session_cookie_name: str = "eval_studio_sid"
     session_ttl_seconds: int = 86400

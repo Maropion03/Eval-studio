@@ -64,6 +64,30 @@ export interface Dataset {
     typical_l2_rate: number;
 }
 
+export interface CaseRow {
+    case_code: string;
+    difficulty: string;
+    risk_tier: Severity;
+    question: string;
+    context_preview: string;
+    reference: {
+        must_contain_facts?: string[];
+        must_cite_sources?: string[];
+        forbidden_claims?: string[];
+        golden_answer?: string;
+        scoring_rubric?: string;
+    };
+    metadata: Record<string, unknown> | null;
+}
+
+export interface DatasetCases {
+    dataset_id: string;
+    name: string;
+    scenario: string;
+    total: number;
+    cases: CaseRow[];
+}
+
 export interface CreateExperimentIn {
     title: string;
     kind: ExperimentKind;
@@ -116,6 +140,14 @@ export interface TrialEvent {
     message?: string | null;
 }
 
+export interface CandidateDimensions {
+    fact_accuracy: number;   // 0-100
+    halluc_avoid: number;
+    citation: number;
+    no_forbidden: number;
+    pass_rate: number;
+}
+
 export interface CandidateSummary {
     model: string;
     display_name: string;
@@ -128,6 +160,7 @@ export interface CandidateSummary {
     total_cost: number;
     cost_per_trial: number;
     pareto: boolean;
+    dimensions?: CandidateDimensions;
 }
 
 export interface RunFailure {
@@ -181,6 +214,7 @@ export interface SettingsOut {
     deepseek_configured: boolean;
     openai_configured: boolean;
     server_fallback_siliconflow: boolean;
+    mock_llm: boolean;
 }
 
 export interface SettingsIn {
@@ -198,6 +232,26 @@ export const api = {
 
     datasets: {
         list: () => http<Dataset[]>('/api/datasets'),
+        cases: (id: string, limit = 50, offset = 0) =>
+            http<DatasetCases>(`/api/datasets/${id}/cases?limit=${limit}&offset=${offset}`),
+        remove: (id: string) => http<void>(`/api/datasets/${id}`, { method: 'DELETE' }),
+        /** Upload a JSON/CSV dataset (multipart). Resolves to the new Dataset. */
+        upload: async (file: File, name?: string): Promise<Dataset> => {
+            const form = new FormData();
+            form.append('file', file);
+            if (name) form.append('name', name);
+            const res = await fetch(`${BASE}/api/datasets/upload`, {
+                method: 'POST',
+                credentials: 'include',
+                body: form,
+            });
+            if (!res.ok) {
+                let detail: unknown;
+                try { detail = await res.json(); } catch { /* ignore */ }
+                throw new APIError(res.status, `${res.status} ${res.statusText}`, detail);
+            }
+            return (await res.json()) as Dataset;
+        },
     },
 
     experiments: {

@@ -61,7 +61,7 @@ a memo your CEO would print.
 - `forbidden_hit`       — red-line phrase detection
 - `pareto`              — derived, places model on cost-vs-accuracy frontier
 
-### Starter pack (4 scenarios · 100 seed cases)
+### Starter pack (4 scenarios · 140 seed cases)
 - **Financial QA** — number-dense QA over Chinese A-share quarterly reports
 - **Compliance Audit** — clause citation + violation classification
 - **Research Summary** — long-context faithful summarization

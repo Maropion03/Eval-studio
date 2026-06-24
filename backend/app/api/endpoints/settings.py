@@ -19,6 +19,7 @@ async def get_session_settings(sess: SessionRow = Depends(current_session)) -> S
         deepseek_configured=bool(keys.get("deepseek")),
         openai_configured=bool(keys.get("openai")),
         server_fallback_siliconflow=bool(cfg.siliconflow_api_key),
+        mock_llm=cfg.mock_llm,
     )
 
 
@@ -45,4 +46,5 @@ async def put_session_settings(
         deepseek_configured=bool(keys.get("deepseek")),
         openai_configured=bool(keys.get("openai")),
         server_fallback_siliconflow=bool(cfg.siliconflow_api_key),
+        mock_llm=cfg.mock_llm,
     )

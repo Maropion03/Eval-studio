@@ -450,3 +450,23 @@
   text-transform: uppercase;
   color: var(--bureau-mute);
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Print — Decision Book → PDF (browser "Save as PDF")
+   Everything chrome is tagged `print:hidden`; the Bureau memo
+   prints on its cream stock with colors preserved.
+   ───────────────────────────────────────────────────────────── */
+
+@media print {
+  /* kill the CRT scanline + vignette overlays */
+  body::before, body::after { display: none !important; }
+  body { background: #fff !important; }
+
+  .bureau {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    box-shadow: none !important;
+  }
+
+  @page { margin: 14mm; }
+}

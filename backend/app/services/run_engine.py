@@ -135,6 +135,7 @@ async def _run_one_trial(
             byok_keys=byok_keys,
             temperature=float(params.get("temperature", 0.2)),
             max_tokens=int(params.get("max_tokens", 1024)),
+            mock_reference=case.reference,
         )
         candidate_out = result.content
         pt, ct = result.prompt_tokens, result.completion_tokens

@@ -125,6 +125,33 @@ async def get_run_report(
         for c in candidates
     }
 
+    # Per-model judge-dimension averages (0-100) for the Analysis radar.
+    _sev_order = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
+    trials_by_model: dict[str, list] = {}
+    for t in trials:
+        trials_by_model.setdefault(t.model, []).append(t)
+
+    def _dimensions(model: str) -> dict[str, float]:
+        ts = trials_by_model.get(model, [])
+        n = len(ts) or 1
+
+        def _avg(key: str, default: float) -> float:
+            vals = [float(v) for t in ts if isinstance(v := (t.scores or {}).get(key), (int, float))]
+            return sum(vals) / len(vals) if vals else default
+
+        fact = _avg("fact_accuracy", 0.0)
+        citation = _avg("citation_recall", 1.0)
+        no_forbidden = sum(1 for t in ts if not (t.scores or {}).get("forbidden_hit")) / n
+        halluc = 1 - sum(_sev_order.get(t.severity, 1) for t in ts) / (n * 3)
+        pass_rate = sum(1 for t in ts if t.severity == "L0") / n
+        return {
+            "fact_accuracy": round(fact * 100, 1),
+            "halluc_avoid": round(halluc * 100, 1),
+            "citation": round(citation * 100, 1),
+            "no_forbidden": round(no_forbidden * 100, 1),
+            "pass_rate": round(pass_rate * 100, 1),
+        }
+
     return {
         "run": {
             "id": run.id,
@@ -152,6 +179,7 @@ async def get_run_report(
                 "total_cost": c.total_cost,
                 "cost_per_trial": c.cost_per_trial,
                 "pareto": c.pareto,
+                "dimensions": _dimensions(c.model),
             }
             for c in candidates
         ],

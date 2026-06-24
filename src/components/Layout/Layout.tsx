@@ -23,7 +23,7 @@ function StatusStrip() {
     ];
 
     return (
-        <div className="h-[28px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] flex items-stretch text-[10.5px] tracking-[0.14em] select-none">
+        <div className="h-[28px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] flex items-stretch text-[10.5px] tracking-[0.14em] select-none print:hidden">
             {segments.map((seg, i) => (
                 <div
                     key={seg.label}
@@ -53,9 +53,9 @@ export default function Layout() {
     return (
         <div className="flex min-h-screen bg-[var(--color-canvas)]">
             <Sidebar />
-            <div className="flex-1 ml-[248px] flex flex-col min-w-0">
+            <div className="flex-1 ml-[248px] flex flex-col min-w-0 print:ml-0">
                 <StatusStrip />
-                <main className="flex-1 p-8 overflow-x-hidden">
+                <main className="flex-1 p-8 overflow-x-hidden print:p-0">
                     <Outlet />
                 </main>
             </div>
